@@ -1,0 +1,298 @@
+dnslog
+  purpose:
+    Read DNS logs from one DNS server instance.
+    Normalize DNS events.
+    Enrich events with minimal metadata.
+    Store structured observations in Neo4J.
+
+  runs on:
+    Primary DNS server
+    Secondary DNS server
+
+  does NOT initially:
+    Perform security analysis
+    Perform heavy analytics locally
+    Modify DNS configuration
+    Resolve DNS queries
+
+------------------------------------------------------------------------------------------------------------------------
+Architecture
+------------------------------------------------------------------------------------------------------------------------
+
+Project structure:
+
+dnslog/
+    cmd/dnslog/main.go
+
+    internal/config/
+        config.go
+
+    internal/parser/
+        parser.go
+
+    internal/model/
+        dns_event.go
+
+    internal/store/
+        neo4j.go
+
+    internal/ingest/
+        offset.go
+        reader.go
+
+    internal/util/
+        hash.go
+
+The application shall be divided into four independent stages:
+
+    Reader
+        Reads the log file.
+        Handles log rotation.
+        Maintains file offset.
+
+    Parser
+        Converts raw log lines into normalized DNSEvents.
+
+    Store
+        Performs batched writes into Neo4J.
+
+    Analytics
+        Implemented later.
+        Uses Neo4J as the only datasource.
+
+------------------------------------------------------------------------------------------------------------------------
+General improvements
+------------------------------------------------------------------------------------------------------------------------
+
+Replace MySQL completely.
+
+Fix current issues:
+
+- Replace database package with store package.
+- Replace MySQL implementation with Neo4J.
+- Add context.Context throughout the pipeline.
+- Handle graceful shutdown.
+- Increase Scanner buffer.
+- Detect log rotation.
+- Maintain persistent offset state.
+- Retry failed Neo4J batches.
+- Handle backpressure if database becomes slow.
+- Log parser failures.
+- Add dry-run mode.
+- Add configurable batch size.
+- Add configurable worker count.
+- Add server identity from configuration.
+- Add duplicate protection using event hash.
+
+------------------------------------------------------------------------------------------------------------------------
+0.1 Development - Log ingestion
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Create a production-ready log ingestion pipeline.
+
+Scope:
+
+- Read one DNS log.
+- Multi-threaded parsing.
+- Normalize domain names.
+- Read configuration.
+- Batch events.
+- Write batches to Neo4J.
+- Support dry-run mode.
+- Report ingestion statistics.
+
+Output:
+
+A reliable log ingestion service.
+
+------------------------------------------------------------------------------------------------------------------------
+0.2 Development - Safe ingestion
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Make ingestion restart-safe.
+
+Scope:
+
+- Persistent offset storage.
+- Detect log rotation.
+- Graceful shutdown.
+- Flush on timer and batch size.
+- Retry Neo4J writes.
+- Exit summary.
+- Duplicate detection.
+- Configurable ignore lists.
+
+------------------------------------------------------------------------------------------------------------------------
+0.3 Development - Graph model
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Create the initial Neo4J graph model.
+
+Nodes:
+
+(:DnsServer)
+(:Client)
+(:Domain)
+(:QueryType)
+(:IpAddress)
+(:DnsEvent)
+
+Relationships:
+
+(:DnsServer)-[:OBSERVED]->(:DnsEvent)
+(:Client)-[:ASKED]->(:DnsEvent)
+(:DnsEvent)-[:FOR_DOMAIN]->(:Domain)
+(:DnsEvent)-[:QUERY_TYPE]->(:QueryType)
+(:DnsEvent)-[:ANSWERED_WITH]->(:IpAddress)
+
+Normalization:
+
+- lowercase domains
+- remove trailing dot
+- configurable ignored domains
+- ignore reverse lookup zones
+- ignore configurable local domains
+
+Metadata:
+
+- server identity
+- server role
+- raw hash
+- firstSeen
+- lastSeen
+
+------------------------------------------------------------------------------------------------------------------------
+0.4 Development - Aggregate graph
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Build aggregated relationships for efficient analysis.
+
+Relationships:
+
+(Client)-[:QUERIED]->(Domain)
+
+Relationship properties:
+
+- count
+- firstSeen
+- lastSeen
+- nxCount
+- queryTypes
+- serverSeenOn
+
+Purpose:
+
+Provide fast graph traversal without scanning individual DNS events.
+
+------------------------------------------------------------------------------------------------------------------------
+0.5 Development - Basic analytics
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Provide useful LAN DNS statistics.
+
+Scope:
+
+- Top clients
+- Top domains
+- Top NXDOMAIN
+- New domains
+- Domains seen by one client only
+- Primary vs Secondary usage
+- Query frequency changes
+- FirstSeen / LastSeen reports
+
+------------------------------------------------------------------------------------------------------------------------
+0.6 Development - Device fingerprinting
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Identify device types from DNS behaviour.
+
+Examples:
+
+Apple
+
+- apple.com
+- icloud.com
+- time.apple.com
+
+Android
+
+- connectivitycheck.gstatic.com
+- mtalk.google.com
+
+Microsoft
+
+- msftconnecttest.com
+- windowsupdate.com
+
+IoT
+
+- pool.ntp.org
+- firmware.vendor.com
+- mqtt brokers
+
+Future:
+
+Each fingerprint contributes confidence points rather than making binary decisions.
+
+------------------------------------------------------------------------------------------------------------------------
+Future expansion sources
+------------------------------------------------------------------------------------------------------------------------
+  Purpose:
+    Allow dnslog to become part of a broader LAN observability graph later.
+
+  Not in initial scope:
+    These sources must not affect the first DNS ingestion versions.
+
+  Important future sources:
+    - Fail2ban
+    - Home Assistant
+    - DHCP leases
+    - ARP tables
+    - firewall logs
+    - mDNS / SSDP
+
+Fail2ban
+  value:
+    Shows hostile external behaviour against exposed services.
+
+  future graph use:
+    - IP address attempted login
+    - IP address was banned
+    - service targeted
+    - jail triggered
+    - timestamp
+    - repeat offender detection
+
+  example:
+    (:ExternalIP)-[:TRIGGERED]->(:Fail2banBan)
+    (:Fail2banBan)-[:TARGETED]->(:Service)
+
+Home Assistant
+  value:
+    Gives real-world device identity and behaviour.
+
+  future graph use:
+    - device names
+    - entity IDs
+    - integrations
+    - sensors
+    - power data
+    - presence
+    - network-related devices
+
+  example:
+    (:Client {ip})-[:MATCHES]->(:HADevice)
+    (:HADevice)-[:HAS_ENTITY]->(:HAEntity)
