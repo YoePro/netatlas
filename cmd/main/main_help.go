@@ -19,6 +19,7 @@ Current scope:
   - Parses DNS events in parallel and writes batches to Neo4J.
   - Creates the initial Neo4J graph schema when dry_run is false.
   - Maintains aggregate Client-to-Domain query relationships.
+  - Prints performance baseline metrics after each ingestion run.
   - Supports dry-run mode for local validation without touching Neo4J.
 
 Usage:
@@ -83,6 +84,10 @@ Graph model:
 
 Aggregate relationship properties:
   count, firstSeen, lastSeen, nxCount, queryTypes, serverSeenOn, lastResponseCode
+
+Performance baseline:
+  Every ingestion run reports total time, parse throughput, write throughput,
+  peak memory, CPU time, CPU utilization, and batch efficiency.
 
 Operational queries:
   dnslog queries

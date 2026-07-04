@@ -32,6 +32,9 @@ func ParseLine(line string, opts Options) (model.DNSEvent, error) {
 	if line == "" || strings.HasPrefix(line, "#") {
 		return model.DNSEvent{}, ErrIgnored
 	}
+	if isIgnoredBindCategory(line) {
+		return model.DNSEvent{}, ErrIgnored
+	}
 
 	if event, ok := parseSimple(line, opts.Server); ok {
 		return filterEvent(event, opts)
@@ -63,6 +66,20 @@ func parseSimple(line string, server ServerMeta) (model.DNSEvent, bool) {
 	}
 
 	return event, true
+}
+
+func isIgnoredBindCategory(line string) bool {
+	parts := strings.Fields(line)
+	if len(parts) < 3 {
+		return false
+	}
+
+	switch parts[2] {
+	case "dnssec:", "general:", "lame-servers:":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseBindQuery(line string, server ServerMeta) (model.DNSEvent, bool) {

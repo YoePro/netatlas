@@ -77,16 +77,17 @@ func main() {
 		}
 	}()
 
-	start := time.Now()
 	runStats := &stats{}
+	perf := startPerfMonitor()
 
 	if err := run(ctx, cfg, eventStore, runStats); err != nil && !errors.Is(err, context.Canceled) {
 		log.Fatalf("ingestion failed: %v", err)
 	}
+	metrics := perf.Stop(runStats, cfg.BatchSize)
 
 	fmt.Printf(
 		"Done in %s. lines=%d parsed=%d ignored=%d parse_failures=%d written=%d batches=%d write_failures=%d dry_run=%t\n",
-		time.Since(start).Round(time.Millisecond),
+		metrics.Total.Round(time.Millisecond),
 		atomic.LoadUint64(&runStats.lines),
 		atomic.LoadUint64(&runStats.parsed),
 		atomic.LoadUint64(&runStats.ignored),
@@ -96,6 +97,7 @@ func main() {
 		atomic.LoadUint64(&runStats.writeFailures),
 		cfg.DryRun,
 	)
+	printPerformanceBaseline(os.Stdout, metrics)
 }
 
 func wantsHelp(args []string) bool {
@@ -274,7 +276,7 @@ func batchWriter(
 	var pendingState ingest.OffsetState
 	hasPendingState := false
 
-	flush := func() bool {
+	flush := func(flushCtx context.Context) bool {
 		if len(batch) == 0 {
 			if hasPendingState {
 				if err := offsetStore.Save(pendingState); err != nil {
@@ -285,7 +287,7 @@ func batchWriter(
 			}
 			return true
 		}
-		if err := writeBatchWithRetry(ctx, eventStore, batch, cfg.MaxWriteRetries, cfg.RetryDelay); err != nil {
+		if err := writeBatchWithRetry(flushCtx, eventStore, batch, cfg.MaxWriteRetries, cfg.RetryDelay); err != nil {
 			atomic.AddUint64(&runStats.writeFailures, 1)
 			errs <- err
 			return false
@@ -306,15 +308,17 @@ func batchWriter(
 	for {
 		select {
 		case <-ctx.Done():
-			_ = flush()
+			flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_ = flush(flushCtx)
+			cancel()
 			return
 		case <-ticker.C:
-			if !flush() {
+			if !flush(ctx) {
 				return
 			}
 		case result, ok := <-results:
 			if !ok {
-				_ = flush()
+				_ = flush(ctx)
 				return
 			}
 			pendingState = result.state
@@ -322,7 +326,7 @@ func batchWriter(
 			if result.hasEvent {
 				batch = append(batch, result.event)
 			}
-			if len(batch) >= cfg.BatchSize && !flush() {
+			if len(batch) >= cfg.BatchSize && !flush(ctx) {
 				return
 			}
 		}

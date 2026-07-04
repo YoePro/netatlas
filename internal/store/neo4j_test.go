@@ -69,6 +69,8 @@ func TestSchemaStatementsCoverGraphIdentity(t *testing.T) {
 func TestWriteEventsCypherMaintainsAggregateRelationship(t *testing.T) {
 	for _, want := range []string{
 		"MERGE (client)-[queried:QUERIED]->(domain)",
+		"AS shouldAggregate",
+		"CASE WHEN shouldAggregate THEN [1] ELSE [] END",
 		"queried.count",
 		"queried.nxCount",
 		"queried.queryTypes",
@@ -78,6 +80,25 @@ func TestWriteEventsCypherMaintainsAggregateRelationship(t *testing.T) {
 	} {
 		if !strings.Contains(writeEventsCypher, want) {
 			t.Fatalf("writeEventsCypher missing %q", want)
+		}
+	}
+}
+
+func TestWriteEventsCypherKeepsSeenTimestampsMonotonic(t *testing.T) {
+	for _, want := range []string{
+		"event.timestamp < server.firstSeen",
+		"event.timestamp > server.lastSeen",
+		"event.timestamp < client.firstSeen",
+		"event.timestamp > client.lastSeen",
+		"event.timestamp < domain.firstSeen",
+		"event.timestamp > domain.lastSeen",
+		"event.timestamp < queryType.firstSeen",
+		"event.timestamp > queryType.lastSeen",
+		"event.timestamp < dnsEvent.firstSeen",
+		"event.timestamp > dnsEvent.lastSeen",
+	} {
+		if !strings.Contains(writeEventsCypher, want) {
+			t.Fatalf("writeEventsCypher missing monotonic timestamp guard %q", want)
 		}
 	}
 }

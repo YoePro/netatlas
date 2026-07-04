@@ -81,3 +81,18 @@ func TestParseLineIgnoresExactDomains(t *testing.T) {
 		t.Fatalf("ParseLine error = %v, want %v", err, ErrIgnored)
 	}
 }
+
+func TestParseLineIgnoresKnownBindNonQueryCategories(t *testing.T) {
+	lines := []string{
+		"04-Jul-2026 23:22:48.092 dnssec: info: validating chatgpt.com/A: no valid signature found",
+		"04-Jul-2026 23:23:16.267 general: warning: zone kok.hemma/IN: dump failed: file not found",
+		"04-Jul-2026 23:29:48.128 lame-servers: info: insecurity proof failed resolving 'cloudflare.net/DNSKEY/IN': 192.168.1.5#53",
+	}
+
+	for _, line := range lines {
+		_, err := ParseLine(line, Options{Server: ServerMeta{Name: "dns-primary", Role: "primary"}})
+		if err != ErrIgnored {
+			t.Fatalf("ParseLine(%q) error = %v, want %v", line, err, ErrIgnored)
+		}
+	}
+}

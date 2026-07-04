@@ -56,8 +56,8 @@ Current implementation status:
         Neo4J graph schema, graph writes, duplicate protection, and filters are implemented.
 
     0.3.2
-        Planned.
-        Performance baseline measurements are documented but not implemented yet.
+        Implemented in working tree.
+        Every ingestion run reports performance baseline metrics.
 
     0.4
         Implemented in working tree.
@@ -237,6 +237,14 @@ Test datasets:
 - 500 lines
 - 10 000 lines
 - Entire production log
+
+Implementation notes:
+- Metrics are printed after each ingestion run.
+- Dry-run mode can be used for parse/pipeline baseline before Neo4J is available.
+- Neo4J write throughput uses the same written-event counter and becomes real database throughput when dry_run=false.
+- CPU utilization is process CPU time divided by wall-clock ingestion time.
+- Peak memory is sampled from Go runtime allocation during ingestion.
+- Batch efficiency is written events divided by theoretical full batch capacity.
 
 ------------------------------------------------------------------------------------------------------------------------
 0.4 Development - Aggregate graph

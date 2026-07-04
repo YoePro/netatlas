@@ -158,16 +158,20 @@ MERGE (server:DnsServer {name: event.serverName})
     server.role = event.serverRole,
     server.firstSeen = event.timestamp
 SET server.role = event.serverRole,
-    server.lastSeen = event.timestamp
+    server.firstSeen = CASE WHEN server.firstSeen IS NULL OR event.timestamp < server.firstSeen THEN event.timestamp ELSE server.firstSeen END,
+    server.lastSeen = CASE WHEN server.lastSeen IS NULL OR event.timestamp > server.lastSeen THEN event.timestamp ELSE server.lastSeen END
 MERGE (client:Client {ip: event.clientIP})
   ON CREATE SET client.firstSeen = event.timestamp
-SET client.lastSeen = event.timestamp
+SET client.firstSeen = CASE WHEN client.firstSeen IS NULL OR event.timestamp < client.firstSeen THEN event.timestamp ELSE client.firstSeen END,
+    client.lastSeen = CASE WHEN client.lastSeen IS NULL OR event.timestamp > client.lastSeen THEN event.timestamp ELSE client.lastSeen END
 MERGE (domain:Domain {name: event.queryName})
   ON CREATE SET domain.firstSeen = event.timestamp
-SET domain.lastSeen = event.timestamp
+SET domain.firstSeen = CASE WHEN domain.firstSeen IS NULL OR event.timestamp < domain.firstSeen THEN event.timestamp ELSE domain.firstSeen END,
+    domain.lastSeen = CASE WHEN domain.lastSeen IS NULL OR event.timestamp > domain.lastSeen THEN event.timestamp ELSE domain.lastSeen END
 MERGE (queryType:QueryType {name: event.queryType})
   ON CREATE SET queryType.firstSeen = event.timestamp
-SET queryType.lastSeen = event.timestamp
+SET queryType.firstSeen = CASE WHEN queryType.firstSeen IS NULL OR event.timestamp < queryType.firstSeen THEN event.timestamp ELSE queryType.firstSeen END,
+    queryType.lastSeen = CASE WHEN queryType.lastSeen IS NULL OR event.timestamp > queryType.lastSeen THEN event.timestamp ELSE queryType.lastSeen END
 MERGE (dnsEvent:DnsEvent {rawHash: event.rawHash})
   ON CREATE SET
     dnsEvent.timestamp = event.timestamp,
@@ -181,7 +185,8 @@ MERGE (dnsEvent:DnsEvent {rawHash: event.rawHash})
     dnsEvent.rawLine = event.rawLine,
     dnsEvent.firstSeen = event.timestamp,
     dnsEvent.aggregateApplied = false
-SET dnsEvent.lastSeen = event.timestamp
+SET dnsEvent.firstSeen = CASE WHEN dnsEvent.firstSeen IS NULL OR event.timestamp < dnsEvent.firstSeen THEN event.timestamp ELSE dnsEvent.firstSeen END,
+    dnsEvent.lastSeen = CASE WHEN dnsEvent.lastSeen IS NULL OR event.timestamp > dnsEvent.lastSeen THEN event.timestamp ELSE dnsEvent.lastSeen END
 MERGE (server)-[:OBSERVED]->(dnsEvent)
 MERGE (client)-[:ASKED]->(dnsEvent)
 MERGE (dnsEvent)-[:FOR_DOMAIN]->(domain)
@@ -189,18 +194,23 @@ MERGE (dnsEvent)-[:QUERY_TYPE]->(queryType)
 FOREACH (_ IN CASE WHEN event.answerIP = "" THEN [] ELSE [1] END |
   MERGE (answer:IpAddress {address: event.answerIP})
   ON CREATE SET answer.firstSeen = event.timestamp
-  SET answer.lastSeen = event.timestamp
+  SET answer.firstSeen = CASE WHEN answer.firstSeen IS NULL OR event.timestamp < answer.firstSeen THEN event.timestamp ELSE answer.firstSeen END,
+      answer.lastSeen = CASE WHEN answer.lastSeen IS NULL OR event.timestamp > answer.lastSeen THEN event.timestamp ELSE answer.lastSeen END
   MERGE (dnsEvent)-[:ANSWERED_WITH]->(answer)
 )
-WITH event, client, domain, dnsEvent
-FOREACH (_ IN CASE WHEN coalesce(dnsEvent.aggregateApplied, false) = false THEN [1] ELSE [] END |
-  MERGE (client)-[queried:QUERIED]->(domain)
-    ON CREATE SET
-      queried.count = 0,
-      queried.nxCount = 0,
-      queried.queryTypes = [],
-      queried.serverSeenOn = [],
-      queried.firstSeen = event.timestamp
+WITH event, client, domain, dnsEvent, coalesce(dnsEvent.aggregateApplied, false) = false AS shouldAggregate
+MERGE (client)-[queried:QUERIED]->(domain)
+  ON CREATE SET
+    queried.count = 0,
+    queried.nxCount = 0,
+    queried.queryTypes = [],
+    queried.serverSeenOn = [],
+    queried.firstSeen = event.timestamp
+SET queried.serverSeenOn = CASE
+      WHEN event.serverName = "" OR event.serverName IN coalesce(queried.serverSeenOn, []) THEN coalesce(queried.serverSeenOn, [])
+      ELSE coalesce(queried.serverSeenOn, []) + event.serverName
+    END
+FOREACH (_ IN CASE WHEN shouldAggregate THEN [1] ELSE [] END |
   SET queried.count = coalesce(queried.count, 0) + 1,
       queried.nxCount = coalesce(queried.nxCount, 0) + CASE WHEN toUpper(coalesce(event.responseCode, "")) = "NXDOMAIN" THEN 1 ELSE 0 END,
       queried.firstSeen = CASE WHEN queried.firstSeen IS NULL OR event.timestamp < queried.firstSeen THEN event.timestamp ELSE queried.firstSeen END,
@@ -209,10 +219,6 @@ FOREACH (_ IN CASE WHEN coalesce(dnsEvent.aggregateApplied, false) = false THEN 
       queried.queryTypes = CASE
         WHEN event.queryType = "" OR event.queryType IN coalesce(queried.queryTypes, []) THEN coalesce(queried.queryTypes, [])
         ELSE coalesce(queried.queryTypes, []) + event.queryType
-      END,
-      queried.serverSeenOn = CASE
-        WHEN event.serverName = "" OR event.serverName IN coalesce(queried.serverSeenOn, []) THEN coalesce(queried.serverSeenOn, [])
-        ELSE coalesce(queried.serverSeenOn, []) + event.serverName
       END,
       dnsEvent.aggregateApplied = true
 )
