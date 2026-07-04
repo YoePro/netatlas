@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/ini.v1"
@@ -26,6 +27,10 @@ type Config struct {
 	RetryDelay      time.Duration
 	OffsetStatePath string
 	DryRun          bool
+
+	IgnoreReverseLookup bool
+	IgnoredDomains      []string
+	LocalDomains        []string
 }
 
 func Load(path string) (*Config, error) {
@@ -43,6 +48,8 @@ func Load(path string) (*Config, error) {
 		RetryDelay:      time.Second,
 		OffsetStatePath: "state/dnslog.offset.json",
 		DryRun:          true,
+
+		IgnoreReverseLookup: true,
 	}
 
 	if _, err := os.Stat(path); err == nil {
@@ -67,6 +74,10 @@ func Load(path string) (*Config, error) {
 		cfg.RetryDelay = file.Section("ingest").Key("retry_delay").MustDuration(cfg.RetryDelay)
 		cfg.OffsetStatePath = file.Section("ingest").Key("offset_state_path").MustString(cfg.OffsetStatePath)
 		cfg.DryRun = file.Section("ingest").Key("dry_run").MustBool(cfg.DryRun)
+
+		cfg.IgnoreReverseLookup = file.Section("filter").Key("ignore_reverse_lookup").MustBool(cfg.IgnoreReverseLookup)
+		cfg.IgnoredDomains = splitList(file.Section("filter").Key("ignored_domains").String())
+		cfg.LocalDomains = splitList(file.Section("filter").Key("local_domains").String())
 	}
 
 	overrideString("DNSLOG_NEO4J_URI", &cfg.Neo4jURI)
@@ -83,6 +94,9 @@ func Load(path string) (*Config, error) {
 	overrideDuration("DNSLOG_RETRY_DELAY", &cfg.RetryDelay)
 	overrideString("DNSLOG_OFFSET_STATE_PATH", &cfg.OffsetStatePath)
 	overrideBool("DNSLOG_DRY_RUN", &cfg.DryRun)
+	overrideBool("DNSLOG_IGNORE_REVERSE_LOOKUP", &cfg.IgnoreReverseLookup)
+	overrideStringList("DNSLOG_IGNORED_DOMAINS", &cfg.IgnoredDomains)
+	overrideStringList("DNSLOG_LOCAL_DOMAINS", &cfg.LocalDomains)
 
 	if cfg.BatchSize <= 0 {
 		return nil, fmt.Errorf("batch_size must be greater than zero")
@@ -149,6 +163,30 @@ func overrideDuration(name string, target *time.Duration) {
 	if err == nil {
 		*target = parsed
 	}
+}
+
+func overrideStringList(name string, target *[]string) {
+	value := os.Getenv(name)
+	if value == "" {
+		return
+	}
+	*target = splitList(value)
+}
+
+func splitList(value string) []string {
+	if value == "" {
+		return nil
+	}
+
+	parts := strings.Split(value, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			values = append(values, part)
+		}
+	}
+	return values
 }
 
 func hostname() string {

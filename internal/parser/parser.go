@@ -20,17 +20,24 @@ type ServerMeta struct {
 	Role string
 }
 
-func ParseLine(line string, server ServerMeta) (model.DNSEvent, error) {
+type Options struct {
+	Server              ServerMeta
+	IgnoreReverseLookup bool
+	IgnoredDomains      []string
+	LocalDomains        []string
+}
+
+func ParseLine(line string, opts Options) (model.DNSEvent, error) {
 	line = strings.TrimSpace(line)
 	if line == "" || strings.HasPrefix(line, "#") {
 		return model.DNSEvent{}, ErrIgnored
 	}
 
-	if event, ok := parseSimple(line, server); ok {
-		return event, nil
+	if event, ok := parseSimple(line, opts.Server); ok {
+		return filterEvent(event, opts)
 	}
-	if event, ok := parseBindQuery(line, server); ok {
-		return event, nil
+	if event, ok := parseBindQuery(line, opts.Server); ok {
+		return filterEvent(event, opts)
 	}
 
 	return model.DNSEvent{}, ErrUnsupported
@@ -47,7 +54,15 @@ func parseSimple(line string, server ServerMeta) (model.DNSEvent, bool) {
 		return model.DNSEvent{}, false
 	}
 
-	return baseEvent(line, timestamp, server, parts[1], parts[2], parts[3]), true
+	event := baseEvent(line, timestamp, server, parts[1], parts[2], parts[3])
+	if len(parts) > 4 {
+		event.ResponseCode = strings.ToUpper(parts[4])
+	}
+	if len(parts) > 5 {
+		event.AnswerIP = parts[5]
+	}
+
+	return event, true
 }
 
 func parseBindQuery(line string, server ServerMeta) (model.DNSEvent, bool) {
@@ -118,6 +133,44 @@ func normalizeDomain(value string) string {
 	value = strings.Trim(value, "()")
 	value = strings.TrimSuffix(value, ".")
 	return strings.ToLower(value)
+}
+
+func filterEvent(event model.DNSEvent, opts Options) (model.DNSEvent, error) {
+	if shouldIgnoreDomain(event.QueryName, opts) {
+		return model.DNSEvent{}, ErrIgnored
+	}
+	return event, nil
+}
+
+func shouldIgnoreDomain(domain string, opts Options) bool {
+	if domain == "" {
+		return true
+	}
+	if opts.IgnoreReverseLookup && isReverseLookup(domain) {
+		return true
+	}
+	for _, ignored := range opts.IgnoredDomains {
+		if domain == normalizeDomain(ignored) {
+			return true
+		}
+	}
+	for _, local := range opts.LocalDomains {
+		local = normalizeDomain(local)
+		if local == "" {
+			continue
+		}
+		if domain == local || strings.HasSuffix(domain, "."+local) {
+			return true
+		}
+	}
+	return false
+}
+
+func isReverseLookup(domain string) bool {
+	return domain == "in-addr.arpa" ||
+		domain == "ip6.arpa" ||
+		strings.HasSuffix(domain, ".in-addr.arpa") ||
+		strings.HasSuffix(domain, ".ip6.arpa")
 }
 
 func clientAddress(value string) string {

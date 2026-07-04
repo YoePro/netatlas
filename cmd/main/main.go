@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -16,6 +17,7 @@ import (
 	"dnslog/internal/config"
 	"dnslog/internal/ingest"
 	"dnslog/internal/model"
+	"dnslog/internal/ops"
 	"dnslog/internal/parser"
 	"dnslog/internal/store"
 )
@@ -38,6 +40,20 @@ type stats struct {
 }
 
 func main() {
+	if wantsHelp(os.Args[1:]) {
+		printHelp(os.Stdout)
+		return
+	}
+	if wantsQueries(os.Args[1:]) {
+		if err := printOperationalQueries(os.Stdout, os.Args[1:]); err != nil {
+			log.Fatalf("%v", err)
+		}
+		return
+	}
+
+	flag.Usage = func() {
+		printHelp(flag.CommandLine.Output())
+	}
 	configPath := flag.String("config", "config.ini", "path to INI config file")
 	flag.Parse()
 
@@ -82,6 +98,28 @@ func main() {
 	)
 }
 
+func wantsHelp(args []string) bool {
+	if len(args) != 1 {
+		return false
+	}
+	return args[0] == "help" || args[0] == "-h" || args[0] == "--help"
+}
+
+func wantsQueries(args []string) bool {
+	return len(args) > 0 && args[0] == "queries"
+}
+
+func printOperationalQueries(w io.Writer, args []string) error {
+	if len(args) > 2 {
+		return fmt.Errorf("usage: dnslog queries [name]")
+	}
+	name := ""
+	if len(args) == 2 {
+		name = args[1]
+	}
+	return ops.PrintQueries(w, name)
+}
+
 func run(ctx context.Context, cfg *config.Config, eventStore store.EventStore, runStats *stats) error {
 	rawLines := make(chan ingest.RawLine, cfg.BatchSize*2)
 	parseResults := make(chan parseResult, cfg.BatchSize*2)
@@ -92,9 +130,14 @@ func run(ctx context.Context, cfg *config.Config, eventStore store.EventStore, r
 	var parserWg sync.WaitGroup
 	for i := 0; i < cfg.WorkerCount; i++ {
 		parserWg.Add(1)
-		go parseWorker(ctx, rawLines, parseResults, parser.ServerMeta{
-			Name: cfg.ServerName,
-			Role: cfg.ServerRole,
+		go parseWorker(ctx, rawLines, parseResults, parser.Options{
+			Server: parser.ServerMeta{
+				Name: cfg.ServerName,
+				Role: cfg.ServerRole,
+			},
+			IgnoreReverseLookup: cfg.IgnoreReverseLookup,
+			IgnoredDomains:      cfg.IgnoredDomains,
+			LocalDomains:        cfg.LocalDomains,
 		}, runStats, &parserWg)
 	}
 
@@ -128,7 +171,7 @@ func parseWorker(
 	ctx context.Context,
 	rawLines <-chan ingest.RawLine,
 	results chan<- parseResult,
-	server parser.ServerMeta,
+	parserOptions parser.Options,
 	runStats *stats,
 	wg *sync.WaitGroup,
 ) {
@@ -147,7 +190,7 @@ func parseWorker(
 				seq:   line.Seq,
 				state: line.NextState,
 			}
-			event, err := parser.ParseLine(line.Text, server)
+			event, err := parser.ParseLine(line.Text, parserOptions)
 			if err != nil {
 				if errors.Is(err, parser.ErrIgnored) {
 					atomic.AddUint64(&runStats.ignored, 1)

@@ -22,7 +22,9 @@ Architecture
 Project structure:
 
 dnslog/
-    cmd/dnslog/main.go
+    cmd/main/
+        main.go
+        main_help.go
 
     internal/config/
         config.go
@@ -42,6 +44,32 @@ dnslog/
 
     internal/util/
         hash.go
+
+Current implementation status:
+
+    v0.2
+        Tagged.
+        Restart-safe ingestion is implemented.
+
+    0.3
+        Implemented in working tree.
+        Neo4J graph schema, graph writes, duplicate protection, and filters are implemented.
+
+    0.3.2
+        Planned.
+        Performance baseline measurements are documented but not implemented yet.
+
+    0.4
+        Implemented in working tree.
+        Client-Domain aggregate relationships are maintained during ingestion.
+
+    0.4.1
+        Implemented in working tree.
+        Built-in operational Cypher queries are available through `dnslog queries`.
+
+    CLI help
+        Implemented in working tree.
+        `dnslog help`, `dnslog -h`, and `dnslog --help` explain usage, config, pipeline, and graph model.
 
 The application shall be divided into four independent stages:
 
@@ -167,48 +195,131 @@ Metadata:
 - firstSeen
 - lastSeen
 
+Implementation notes:
+
+- Create Neo4J constraints/indexes at startup when dry_run=false.
+- Use rawHash as the DnsEvent identity.
+- Store event metadata directly on DnsEvent for practical querying.
+- Keep config.ini local and use config.example.ini as the tracked template.
+- Support filter configuration for reverse lookup zones, exact ignored domains, and local domains.
+
+------------------------------------------------------------------------------------------------------------------------
+0.3.1 Development - CLI help
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Make the tool self-explaining for local operation.
+
+Scope:
+
+- Add `dnslog help`.
+- Support `dnslog -h` and `dnslog --help`.
+- Explain purpose, current scope, config file sections, environment overrides, pipeline, and graph model.
+- Ensure help does not require config loading or Neo4J connectivity.
+
+------------------------------------------------------------------------------------------------------------------------
+0.3.2 Performance baseline
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Measure ingestion performance before further feature development.
+
+Measure:
+- Parse throughput (lines/sec)
+- Neo4J write throughput (events/sec)
+- Total ingestion time
+- Peak memory usage
+- CPU utilization
+- Batch efficiency
+
+Test datasets:
+- 500 lines
+- 10 000 lines
+- Entire production log
+
 ------------------------------------------------------------------------------------------------------------------------
 0.4 Development - Aggregate graph
 ------------------------------------------------------------------------------------------------------------------------
 
 Goal:
+Create an aggregated graph layer for fast analysis without scanning individual DnsEvent nodes.
 
-Build aggregated relationships for efficient analysis.
+Scope:
+- Add or update (Client)-[:QUERIED]->(Domain)
+- Maintain aggregate counters during ingestion
+- Track firstSeen and lastSeen
+- Track total query count
+- Track NXDOMAIN count
+- Track query types seen
+- Track which DNS servers observed the relation
+- Track last response code
+- Keep raw DnsEvent nodes unchanged
 
-Relationships:
+Relationship:
 
 (Client)-[:QUERIED]->(Domain)
 
-Relationship properties:
-
+Properties:
 - count
 - firstSeen
 - lastSeen
 - nxCount
 - queryTypes
 - serverSeenOn
+- lastResponseCode
+
+Implementation notes:
+- Aggregate writes should happen in the same Neo4J transaction as event writes.
+- Updates must be idempotent.
+- Duplicate DnsEvent rows must not increment aggregate counters twice.
+- rawHash should protect both DnsEvent creation and aggregate updates.
+- DnsEvent.aggregateApplied is used as the guard that prevents duplicate aggregate increments.
+
+------------------------------------------------------------------------------------------------------------------------
+0.4.1 Development - Operational queries
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Add practical Cypher queries for validating ingested data.
+
+Scope:
+- Count events per DNS server
+- Count unique clients
+- Count unique domains
+- Show newest events
+- Show top Client-Domain aggregates
+- Show duplicate protection status
+- Show primary vs secondary split
+- Show ignored/filtered counts from ingestion summary if available
+- Print all operational queries from `dnslog queries`
+- Print one named query from `dnslog queries <name>`
 
 Purpose:
+Make it easy to verify that ingestion and aggregation behave correctly before building analytics.
 
-Provide fast graph traversal without scanning individual DNS events.
+Implementation notes:
+- Queries are bundled as named Cypher snippets.
+- Query printing must not require config loading or Neo4J connectivity.
+- Runtime execution can be added later once container/local database workflow is stable.
 
 ------------------------------------------------------------------------------------------------------------------------
 0.5 Development - Basic analytics
 ------------------------------------------------------------------------------------------------------------------------
 
 Goal:
-
-Provide useful LAN DNS statistics.
+Provide useful LAN DNS reports based on the aggregate graph.
 
 Scope:
-
 - Top clients
 - Top domains
-- Top NXDOMAIN
-- New domains
+- Top NXDOMAIN clients
+- Top NXDOMAIN domains
+- New domains last 24h
 - Domains seen by one client only
-- Primary vs Secondary usage
-- Query frequency changes
+- Clients using secondary unusually much
+- Clients with sudden query increase
+- Domains with sudden query increase
 - FirstSeen / LastSeen reports
 
 ------------------------------------------------------------------------------------------------------------------------
@@ -296,3 +407,14 @@ Home Assistant
   example:
     (:Client {ip})-[:MATCHES]->(:HADevice)
     (:HADevice)-[:HAS_ENTITY]->(:HAEntity)
+
+0.7 Future - External observation sources
+
+Goal:
+Prepare the project direction for additional LAN/security observations without expanding the first DNS scope.
+
+Scope:
+- Document possible Fail2ban integration
+- Document possible Home Assistant integration
+- Do not implement yet
+- Keep DNS ingestion isolated and stable first

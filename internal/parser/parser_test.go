@@ -3,9 +3,11 @@ package parser
 import "testing"
 
 func TestParseSimpleLine(t *testing.T) {
-	event, err := ParseLine("2026-07-03T12:00:00Z 192.168.1.10 Example.COM. a", ServerMeta{
-		Name: "dns-primary",
-		Role: "primary",
+	event, err := ParseLine("2026-07-03T12:00:00Z 192.168.1.10 Example.COM. a NOERROR 93.184.216.34", Options{
+		Server: ServerMeta{
+			Name: "dns-primary",
+			Role: "primary",
+		},
 	})
 	if err != nil {
 		t.Fatalf("ParseLine returned error: %v", err)
@@ -16,6 +18,12 @@ func TestParseSimpleLine(t *testing.T) {
 	}
 	if event.QueryType != "A" {
 		t.Fatalf("QueryType = %q, want %q", event.QueryType, "A")
+	}
+	if event.ResponseCode != "NOERROR" {
+		t.Fatalf("ResponseCode = %q, want %q", event.ResponseCode, "NOERROR")
+	}
+	if event.AnswerIP != "93.184.216.34" {
+		t.Fatalf("AnswerIP = %q, want %q", event.AnswerIP, "93.184.216.34")
 	}
 	if event.ServerName != "dns-primary" || event.ServerRole != "primary" {
 		t.Fatalf("server metadata = %q/%q", event.ServerName, event.ServerRole)
@@ -28,7 +36,7 @@ func TestParseSimpleLine(t *testing.T) {
 func TestParseBindQueryLine(t *testing.T) {
 	line := "04-Jul-2026 22:13:01.123 queries: info: client @0x7f00 192.168.1.10#53111 (Example.COM): query: Example.COM IN AAAA +E(0)K (192.168.1.1)"
 
-	event, err := ParseLine(line, ServerMeta{Name: "dns-secondary", Role: "secondary"})
+	event, err := ParseLine(line, Options{Server: ServerMeta{Name: "dns-secondary", Role: "secondary"}})
 	if err != nil {
 		t.Fatalf("ParseLine returned error: %v", err)
 	}
@@ -41,5 +49,35 @@ func TestParseBindQueryLine(t *testing.T) {
 	}
 	if event.QueryType != "AAAA" {
 		t.Fatalf("QueryType = %q, want %q", event.QueryType, "AAAA")
+	}
+}
+
+func TestParseLineIgnoresReverseLookup(t *testing.T) {
+	_, err := ParseLine("2026-07-03T12:00:00Z 192.168.1.10 10.1.168.192.in-addr.arpa. ptr", Options{
+		Server:              ServerMeta{Name: "dns-primary", Role: "primary"},
+		IgnoreReverseLookup: true,
+	})
+	if err != ErrIgnored {
+		t.Fatalf("ParseLine error = %v, want %v", err, ErrIgnored)
+	}
+}
+
+func TestParseLineIgnoresLocalDomains(t *testing.T) {
+	_, err := ParseLine("2026-07-03T12:00:00Z 192.168.1.10 printer.lan. a", Options{
+		Server:       ServerMeta{Name: "dns-primary", Role: "primary"},
+		LocalDomains: []string{"lan"},
+	})
+	if err != ErrIgnored {
+		t.Fatalf("ParseLine error = %v, want %v", err, ErrIgnored)
+	}
+}
+
+func TestParseLineIgnoresExactDomains(t *testing.T) {
+	_, err := ParseLine("2026-07-03T12:00:00Z 192.168.1.10 telemetry.example.com. a", Options{
+		Server:         ServerMeta{Name: "dns-primary", Role: "primary"},
+		IgnoredDomains: []string{"telemetry.example.com"},
+	})
+	if err != ErrIgnored {
+		t.Fatalf("ParseLine error = %v, want %v", err, ErrIgnored)
 	}
 }
