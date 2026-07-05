@@ -1061,6 +1061,19 @@ Future observation sources:
 - SSDP
 - LLDP
 
+Status:
+
+Initial graph foundation implemented in 0.8.
+
+Implementation notes:
+- Introduced `Device` as the primary persistent network entity.
+- DNS clients are linked to devices with `(:Device)-[:HAS_CLIENT]->(:Client)`.
+- The first device key is IP-based (`ip:<client-ip>`) until stronger future collectors exist.
+- Added schema for Device, Fingerprint, OperatingSystem, DeviceType, and Software nodes.
+- Added operational queries for unique devices, device-client mapping, unenriched devices, and enrichment templates.
+- Added analytics reports for top devices and enrichment summaries.
+- Evidence-preserving enrichment relationships are defined as Cypher templates but the automated fingerprint engine remains in 0.8.0+.
+
 ------------------------------------------------------------------------------------------------------------------------
 0.8.0 Development - Fingerprint rule engine
 ------------------------------------------------------------------------------------------------------------------------
@@ -1087,6 +1100,18 @@ Fingerprint categories:
 Notes:
 
 Rules shall be data-driven rather than hardcoded whenever practical.
+
+Status:
+
+Implemented in 0.8.
+
+Implementation notes:
+- Added fingerprint rule engine under `internal/fingerprint`.
+- Rules load from `[fingerprints] rules_path` when present.
+- Built-in fallback rules are used when no custom rule file exists.
+- JSON rule format supports id, name, category, target, score, domains, domain_suffixes, and negative indicators.
+- Multiple rules may match the same DNS event and produce separate evidence items.
+- Added `config/fingerprints.example.json`.
 
 ------------------------------------------------------------------------------------------------------------------------
 0.8.1 Development - Operating system identification
@@ -1136,6 +1161,15 @@ Notes:
 
 Linux detection shall generally produce lower confidence than Windows or Android.
 
+Status:
+
+Implemented in 0.8.1.
+
+Implementation notes:
+- Built-in DNS fingerprints cover Windows, Android, Apple/iOS, and Linux.
+- Linux rules use lower scores from distribution/package repository domains.
+- Windows and Android rules use stronger connectivity/update-service indicators.
+
 ------------------------------------------------------------------------------------------------------------------------
 0.8.2 Development - Device type identification
 ------------------------------------------------------------------------------------------------------------------------
@@ -1163,6 +1197,15 @@ Notes:
 
 Device type is independent from operating system.
 
+Status:
+
+Implemented in 0.8.2.
+
+Implementation notes:
+- Device type evidence is separate from operating system evidence.
+- Built-in rules currently identify mobile phone and server-like behaviour from DNS indicators.
+- The graph supports additional DeviceType targets through JSON rules.
+
 
 ------------------------------------------------------------------------------------------------------------------------
 0.8.3 Development - Infrastructure identification
@@ -1187,6 +1230,15 @@ Recognise:
 Purpose:
 
 Infrastructure devices should become first-class citizens in the graph rather than ordinary clients.
+
+Status:
+
+Implemented in 0.8.3.
+
+Implementation notes:
+- Added InfrastructureRole node support.
+- Added `(:Device)-[:LIKELY_INFRASTRUCTURE]->(:InfrastructureRole)` enrichment relationship.
+- Built-in rules include first DNS and network equipment indicators.
 
 ------------------------------------------------------------------------------------------------------------------------
 0.8.4 Development - Software identification
@@ -1214,6 +1266,15 @@ Examples:
 Notes:
 
 Software observations increase confidence but should not determine device identity alone.
+
+Status:
+
+Implemented in 0.8.4.
+
+Implementation notes:
+- Added Software node support and `(:Device)-[:LIKELY_HAS]->(:Software)`.
+- Built-in DNS rules include Home Assistant, Docker, Kubernetes, Plex, Jellyfin, Steam, and Tailscale.
+- Software evidence is written independently from OS and device type.
 
 ------------------------------------------------------------------------------------------------------------------------
 0.8.5 Development - Confidence engine
@@ -1247,6 +1308,17 @@ Notes:
 
 Confidence shall increase over time as more observations are collected.
 Confidence may also decrease when observations become stale.
+
+Status:
+
+Implemented in 0.8.5.
+
+Implementation notes:
+- Each evidence item contributes a signed score.
+- Confidence bands are low, medium, and high.
+- Enrichment relationships preserve score, confidence, firstSeen, lastSeen, evidenceCount, evidenceHashes,
+  lastFingerprint, and lastMatchedDomain.
+- Staleness decay is not implemented yet; the model stores lastSeen so decay can be added later.
 
 ------------------------------------------------------------------------------------------------------------------------
 0.8.6 Development - Neo4J enrichment model
@@ -1285,6 +1357,17 @@ Properties:
 Notes:
 
 Evidence should always remain traceable.
+
+Status:
+
+Graph model foundation implemented in 0.8.
+
+Implementation notes:
+- Schema constraints exist for Fingerprint, OperatingSystem, DeviceType, and Software.
+- Enrichment relationship templates preserve confidence, score, firstSeen, lastSeen, evidenceCount,
+  and evidenceHashes.
+- Automatic enrichment execution is implemented through the fingerprint rule engine during DNS batch writes.
+- Additional schema exists for InfrastructureRole and Vendor.
 
 ------------------------------------------------------------------------------------------------------------------------
 Future expansion sources

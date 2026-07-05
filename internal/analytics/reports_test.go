@@ -8,6 +8,8 @@ import (
 
 func TestReportsCoverBasicAnalyticsScope(t *testing.T) {
 	want := []string{
+		"top-devices",
+		"device-enrichment-summary",
 		"top-clients",
 		"top-domains",
 		"top-nxdomain-clients",

@@ -20,22 +20,23 @@ type Config struct {
 	ServerName  string
 	ServerRole  string
 
-	BatchSize           int
-	WorkerCount         int
-	FlushInterval       time.Duration
-	MaxWriteRetries     int
-	RetryDelay          time.Duration
-	OffsetStatePath     string
-	DryRun              bool
-	Debug               bool
-	RuntimeMode         string
-	LogMode             string
-	Genesis             string
-	GenesisAfter        string
-	DryRunUpdatesOffset bool
-	ProgressInterval    time.Duration
-	ParseFailureSamples int
-	ParseFailurePath    string
+	BatchSize            int
+	WorkerCount          int
+	FlushInterval        time.Duration
+	MaxWriteRetries      int
+	RetryDelay           time.Duration
+	OffsetStatePath      string
+	DryRun               bool
+	Debug                bool
+	RuntimeMode          string
+	LogMode              string
+	Genesis              string
+	GenesisAfter         string
+	DryRunUpdatesOffset  bool
+	ProgressInterval     time.Duration
+	ParseFailureSamples  int
+	ParseFailurePath     string
+	FingerprintRulesPath string
 
 	IgnoreReverseLookup bool
 	IgnoredDomains      []string
@@ -44,26 +45,27 @@ type Config struct {
 
 func Load(path string) (*Config, error) {
 	cfg := &Config{
-		Neo4jURI:            "neo4j://127.0.0.1:7687",
-		Neo4jUser:           "neo4j",
-		Neo4jDatabase:       "neo4j",
-		LogFilePath:         "dns.log",
-		ServerName:          hostname(),
-		ServerRole:          "primary",
-		BatchSize:           2000,
-		WorkerCount:         4,
-		FlushInterval:       5 * time.Second,
-		MaxWriteRetries:     3,
-		RetryDelay:          time.Second,
-		OffsetStatePath:     "state/dnslog.offset.json",
-		DryRun:              true,
-		RuntimeMode:         "medium",
-		LogMode:             "normal",
-		Genesis:             "all",
-		DryRunUpdatesOffset: false,
-		ProgressInterval:    10 * time.Second,
-		ParseFailureSamples: 20,
-		ParseFailurePath:    "state/parse-failures.log",
+		Neo4jURI:             "neo4j://127.0.0.1:7687",
+		Neo4jUser:            "neo4j",
+		Neo4jDatabase:        "neo4j",
+		LogFilePath:          "dns.log",
+		ServerName:           hostname(),
+		ServerRole:           "primary",
+		BatchSize:            2000,
+		WorkerCount:          4,
+		FlushInterval:        5 * time.Second,
+		MaxWriteRetries:      3,
+		RetryDelay:           time.Second,
+		OffsetStatePath:      "state/dnslog.offset.json",
+		DryRun:               true,
+		RuntimeMode:          "medium",
+		LogMode:              "normal",
+		Genesis:              "all",
+		DryRunUpdatesOffset:  false,
+		ProgressInterval:     10 * time.Second,
+		ParseFailureSamples:  20,
+		ParseFailurePath:     "state/parse-failures.log",
+		FingerprintRulesPath: "config/fingerprints.json",
 
 		IgnoreReverseLookup: true,
 	}
@@ -98,6 +100,7 @@ func Load(path string) (*Config, error) {
 		cfg.ProgressInterval = file.Section("ingest").Key("progress_interval").MustDuration(cfg.ProgressInterval)
 		cfg.ParseFailureSamples = file.Section("ingest").Key("parse_failure_samples").MustInt(cfg.ParseFailureSamples)
 		cfg.ParseFailurePath = file.Section("ingest").Key("parse_failure_path").MustString(cfg.ParseFailurePath)
+		cfg.FingerprintRulesPath = file.Section("fingerprints").Key("rules_path").MustString(cfg.FingerprintRulesPath)
 
 		cfg.IgnoreReverseLookup = file.Section("filter").Key("ignore_reverse_lookup").MustBool(cfg.IgnoreReverseLookup)
 		cfg.IgnoredDomains = splitList(file.Section("filter").Key("ignored_domains").String())
@@ -126,6 +129,7 @@ func Load(path string) (*Config, error) {
 	overrideDuration("DNSLOG_PROGRESS_INTERVAL", &cfg.ProgressInterval)
 	overrideInt("DNSLOG_PARSE_FAILURE_SAMPLES", &cfg.ParseFailureSamples)
 	overrideString("DNSLOG_PARSE_FAILURE_PATH", &cfg.ParseFailurePath)
+	overrideString("DNSLOG_FINGERPRINT_RULES_PATH", &cfg.FingerprintRulesPath)
 	overrideBool("DNSLOG_IGNORE_REVERSE_LOOKUP", &cfg.IgnoreReverseLookup)
 	overrideStringList("DNSLOG_IGNORED_DOMAINS", &cfg.IgnoredDomains)
 	overrideStringList("DNSLOG_LOCAL_DOMAINS", &cfg.LocalDomains)

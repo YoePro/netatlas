@@ -4,6 +4,8 @@ NetAtlas is a LAN observability project for turning local network signals into a
 
 The first collector is `dnslog`, a DNS log ingester that reads DNS server logs, normalizes query observations, and writes them to Neo4J. The current binary remains named `dnslog` while the wider project becomes NetAtlas.
 
+DNS observations are attached to persistent `Device` entities. Today the first stable identity is based on client IP address; future collectors can add stronger identities from DHCP, ARP, Home Assistant, and other sources without replacing the DNS collector.
+
 ## What NetAtlas Is
 
 - A local-first observability graph for your own network.
@@ -41,6 +43,18 @@ Useful commands:
 ./bin/dnslog queries
 ./bin/dnslog analytics
 ```
+
+Device-oriented validation:
+
+```bash
+./bin/dnslog queries unique-devices
+./bin/dnslog queries device-client-map
+./bin/dnslog analytics top-devices
+```
+
+Fingerprinting:
+
+NetAtlas loads DNS fingerprint rules from `[fingerprints] rules_path` when the file exists. If no custom file exists, built-in rules cover the first operating system, device type, infrastructure, software, and vendor signals. See `config/fingerprints.example.json` for the JSON shape.
 
 ## Configuration
 

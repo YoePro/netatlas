@@ -1,0 +1,20 @@
+{
+  "rules": [
+    {
+      "id": "os-windows-connectivity",
+      "name": "Microsoft connectivity test",
+      "category": "operating_system",
+      "target": "Windows",
+      "score": 20,
+      "domains": ["msftconnecttest.com", "www.msftconnecttest.com"]
+    },
+    {
+      "id": "software-home-assistant",
+      "name": "Home Assistant",
+      "category": "software",
+      "target": "Home Assistant",
+      "score": 45,
+      "domain_suffixes": ["home-assistant.io", "nabucasa.com"]
+    }
+  ]
+}

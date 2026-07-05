@@ -114,7 +114,9 @@ func TestPrintHelpMentionsCoreUsage(t *testing.T) {
 		"config.example.ini",
 		"DNSLOG_DRY_RUN",
 		"DNSLOG_GENESIS",
+		"DNSLOG_FINGERPRINT_RULES_PATH",
 		"skipped_genesis",
+		"(:Device)-[:HAS_CLIENT]->(:Client)",
 		"(:DnsServer)-[:OBSERVED]->(:DnsEvent)",
 	} {
 		if !strings.Contains(output, want) {

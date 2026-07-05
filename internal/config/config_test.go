@@ -42,6 +42,9 @@ progress_interval = 3s
 parse_failure_samples = 7
 parse_failure_path = /var/lib/dnslog/parse-failures.log
 
+[fingerprints]
+rules_path = /etc/netatlas/fingerprints.json
+
 [filter]
 ignore_reverse_lookup = false
 ignored_domains = telemetry.example.com, noise.example.net
@@ -76,6 +79,9 @@ local_domains = lan, home.arpa
 	}
 	if cfg.ProgressInterval != 3*time.Second || cfg.ParseFailureSamples != 7 || cfg.ParseFailurePath != "/var/lib/dnslog/parse-failures.log" {
 		t.Fatalf("ops config = progress:%s samples:%d path:%q", cfg.ProgressInterval, cfg.ParseFailureSamples, cfg.ParseFailurePath)
+	}
+	if cfg.FingerprintRulesPath != "/etc/netatlas/fingerprints.json" {
+		t.Fatalf("FingerprintRulesPath = %q", cfg.FingerprintRulesPath)
 	}
 	if cfg.IgnoreReverseLookup {
 		t.Fatal("IgnoreReverseLookup = true, want false")

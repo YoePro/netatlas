@@ -14,6 +14,33 @@ type Report struct {
 
 var reports = []Report{
 	{
+		Name:        "top-devices",
+		Description: "Devices with the highest aggregate DNS query volume.",
+		Cypher: `MATCH (device:Device)-[:HAS_CLIENT]->(client:Client)-[queried:QUERIED]->(:Domain)
+RETURN device.key AS device,
+       device.primaryIP AS primaryIP,
+       sum(queried.count) AS queries,
+       sum(coalesce(queried.nxCount, 0)) AS nxQueries,
+       max(queried.lastSeen) AS lastSeen
+ORDER BY queries DESC, lastSeen DESC
+LIMIT 25;`,
+	},
+	{
+		Name:        "device-enrichment-summary",
+		Description: "Device enrichment relationships and confidence values.",
+		Cypher: `MATCH (device:Device)
+OPTIONAL MATCH (device)-[osRel:LIKELY_RUNNING]->(os:OperatingSystem)
+OPTIONAL MATCH (device)-[typeRel:LIKELY_IS]->(deviceType:DeviceType)
+OPTIONAL MATCH (device)-[softRel:LIKELY_HAS]->(software:Software)
+RETURN device.key AS device,
+       device.primaryIP AS primaryIP,
+       collect(DISTINCT {name: os.name, confidence: osRel.confidence, score: osRel.score}) AS operatingSystems,
+       collect(DISTINCT {name: deviceType.name, confidence: typeRel.confidence, score: typeRel.score}) AS deviceTypes,
+       collect(DISTINCT {name: software.name, confidence: softRel.confidence, score: softRel.score}) AS software
+ORDER BY device.primaryIP
+LIMIT 50;`,
+	},
+	{
 		Name:        "top-clients",
 		Description: "Clients with the highest aggregate query volume.",
 		Cypher: `MATCH (client:Client)-[queried:QUERIED]->(:Domain)

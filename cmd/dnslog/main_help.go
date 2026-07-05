@@ -82,6 +82,9 @@ Configuration:
   [filter]
     ignore_reverse_lookup, ignored_domains, local_domains
 
+  [fingerprints]
+    rules_path
+
 Environment overrides:
   DNSLOG_NEO4J_URI
   DNSLOG_NEO4J_USER
@@ -105,6 +108,7 @@ Environment overrides:
   DNSLOG_PROGRESS_INTERVAL
   DNSLOG_PARSE_FAILURE_SAMPLES
   DNSLOG_PARSE_FAILURE_PATH
+  DNSLOG_FINGERPRINT_RULES_PATH
   DNSLOG_IGNORE_REVERSE_LOOKUP
   DNSLOG_IGNORED_DOMAINS
   DNSLOG_LOCAL_DOMAINS
@@ -121,12 +125,19 @@ Input overrides:
   -offset-state disables the automatic input-derived state path.
 
 Graph model:
+  (:Device)-[:HAS_CLIENT]->(:Client)
   (:DnsServer)-[:OBSERVED]->(:DnsEvent)
   (:Client)-[:ASKED]->(:DnsEvent)
   (:DnsEvent)-[:FOR_DOMAIN]->(:Domain)
   (:DnsEvent)-[:QUERY_TYPE]->(:QueryType)
   (:DnsEvent)-[:ANSWERED_WITH]->(:IpAddress)
   (:Client)-[:QUERIED]->(:Domain)
+  Future enrichment:
+  (:Device)-[:LIKELY_RUNNING]->(:OperatingSystem)
+  (:Device)-[:LIKELY_IS]->(:DeviceType)
+  (:Device)-[:LIKELY_HAS]->(:Software)
+  (:Device)-[:LIKELY_INFRASTRUCTURE]->(:InfrastructureRole)
+  (:Device)-[:LIKELY_VENDOR]->(:Vendor)
 
 Aggregate relationship properties:
   count, firstSeen, lastSeen, nxCount, queryTypes, serverSeenOn, lastResponseCode
@@ -205,5 +216,6 @@ Notes:
   genesis defaults to all. Supported values are all, today, 3h, 24h, 7d, 30d, and custom.
   genesis=custom uses genesis_after formatted as RFC3339, for example 2026-07-05T00:00:00+02:00.
   Parse failure samples are appended to parse_failure_path and capped by parse_failure_samples per run.
+  Fingerprint rules are loaded from [fingerprints] rules_path when present; otherwise built-in DNS rules are used.
 `)
 }

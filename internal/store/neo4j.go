@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"netatlas/internal/config"
+	"netatlas/internal/fingerprint"
 	"netatlas/internal/model"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -17,15 +18,20 @@ type EventStore interface {
 }
 
 type Neo4jStore struct {
-	driver   neo4j.DriverWithContext
-	database string
-	dryRun   bool
-	debug    bool
+	driver       neo4j.DriverWithContext
+	database     string
+	dryRun       bool
+	debug        bool
+	fingerprints *fingerprint.Engine
 }
 
 func NewNeo4jStore(ctx context.Context, cfg *config.Config) (*Neo4jStore, error) {
 	if cfg.DryRun {
-		return &Neo4jStore{dryRun: true, debug: cfg.Debug}, nil
+		engine, err := fingerprint.Load(cfg.FingerprintRulesPath)
+		if err != nil {
+			return nil, err
+		}
+		return &Neo4jStore{dryRun: true, debug: cfg.Debug, fingerprints: engine}, nil
 	}
 
 	driver, err := neo4j.NewDriverWithContext(
@@ -45,6 +51,11 @@ func NewNeo4jStore(ctx context.Context, cfg *config.Config) (*Neo4jStore, error)
 		driver:   driver,
 		database: cfg.Neo4jDatabase,
 		debug:    cfg.Debug,
+	}
+	store.fingerprints, err = fingerprint.Load(cfg.FingerprintRulesPath)
+	if err != nil {
+		_ = driver.Close(ctx)
+		return nil, err
 	}
 	if err := store.EnsureSchema(ctx); err != nil {
 		_ = driver.Close(ctx)
@@ -108,9 +119,20 @@ func (s *Neo4jStore) WriteBatch(ctx context.Context, batch []model.DNSEvent) err
 	defer session.Close(ctx)
 
 	events := eventParams(batch)
+	enrichments := enrichmentParams(s.fingerprints.MatchBatch(batch))
 
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		result, err := tx.Run(ctx, writeEventsCypher, map[string]any{"events": events})
+		if err != nil {
+			return nil, err
+		}
+		if _, err := result.Consume(ctx); err != nil {
+			return nil, err
+		}
+		if len(enrichments) == 0 {
+			return nil, nil
+		}
+		result, err = tx.Run(ctx, writeEnrichmentsCypher, map[string]any{"items": enrichments})
 		if err != nil {
 			return nil, err
 		}
@@ -121,6 +143,24 @@ func (s *Neo4jStore) WriteBatch(ctx context.Context, batch []model.DNSEvent) err
 	}
 
 	return nil
+}
+
+func enrichmentParams(items []fingerprint.Evidence) []map[string]any {
+	params := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		params = append(params, map[string]any{
+			"deviceKey":     item.DeviceKey,
+			"category":      item.Category,
+			"target":        item.Target,
+			"score":         item.Score,
+			"confidence":    item.Confidence,
+			"timestamp":     item.Timestamp,
+			"evidenceHash":  item.EvidenceHash,
+			"fingerprintID": item.FingerprintID,
+			"matchedDomain": item.MatchedDomain,
+		})
+	}
+	return params
 }
 
 func eventParams(batch []model.DNSEvent) []map[string]any {
@@ -147,12 +187,20 @@ func eventParams(batch []model.DNSEvent) []map[string]any {
 
 var schemaStatements = []string{
 	"CREATE CONSTRAINT dns_server_name IF NOT EXISTS FOR (n:DnsServer) REQUIRE n.name IS UNIQUE",
+	"CREATE CONSTRAINT device_key IF NOT EXISTS FOR (n:Device) REQUIRE n.key IS UNIQUE",
 	"CREATE CONSTRAINT client_ip IF NOT EXISTS FOR (n:Client) REQUIRE n.ip IS UNIQUE",
 	"CREATE CONSTRAINT domain_name IF NOT EXISTS FOR (n:Domain) REQUIRE n.name IS UNIQUE",
 	"CREATE CONSTRAINT query_type_name IF NOT EXISTS FOR (n:QueryType) REQUIRE n.name IS UNIQUE",
 	"CREATE CONSTRAINT ip_address_address IF NOT EXISTS FOR (n:IpAddress) REQUIRE n.address IS UNIQUE",
 	"CREATE CONSTRAINT dns_event_raw_hash IF NOT EXISTS FOR (n:DnsEvent) REQUIRE n.rawHash IS UNIQUE",
+	"CREATE CONSTRAINT fingerprint_id IF NOT EXISTS FOR (n:Fingerprint) REQUIRE n.id IS UNIQUE",
+	"CREATE CONSTRAINT operating_system_name IF NOT EXISTS FOR (n:OperatingSystem) REQUIRE n.name IS UNIQUE",
+	"CREATE CONSTRAINT device_type_name IF NOT EXISTS FOR (n:DeviceType) REQUIRE n.name IS UNIQUE",
+	"CREATE CONSTRAINT software_name IF NOT EXISTS FOR (n:Software) REQUIRE n.name IS UNIQUE",
+	"CREATE CONSTRAINT infrastructure_role_name IF NOT EXISTS FOR (n:InfrastructureRole) REQUIRE n.name IS UNIQUE",
+	"CREATE CONSTRAINT vendor_name IF NOT EXISTS FOR (n:Vendor) REQUIRE n.name IS UNIQUE",
 	"CREATE INDEX dns_event_timestamp IF NOT EXISTS FOR (n:DnsEvent) ON (n.timestamp)",
+	"CREATE INDEX device_last_seen IF NOT EXISTS FOR (n:Device) ON (n.lastSeen)",
 	"CREATE INDEX domain_last_seen IF NOT EXISTS FOR (n:Domain) ON (n.lastSeen)",
 	"CREATE INDEX client_last_seen IF NOT EXISTS FOR (n:Client) ON (n.lastSeen)",
 	"CREATE INDEX queried_count IF NOT EXISTS FOR ()-[r:QUERIED]-() ON (r.count)",
@@ -172,6 +220,14 @@ MERGE (client:Client {ip: event.clientIP})
   ON CREATE SET client.firstSeen = event.timestamp
 SET client.firstSeen = CASE WHEN client.firstSeen IS NULL OR event.timestamp < client.firstSeen THEN event.timestamp ELSE client.firstSeen END,
     client.lastSeen = CASE WHEN client.lastSeen IS NULL OR event.timestamp > client.lastSeen THEN event.timestamp ELSE client.lastSeen END
+MERGE (device:Device {key: "ip:" + event.clientIP})
+  ON CREATE SET
+    device.primaryIP = event.clientIP,
+    device.identitySource = "dns-client-ip",
+    device.firstSeen = event.timestamp
+SET device.primaryIP = CASE WHEN device.primaryIP IS NULL OR device.primaryIP = "" THEN event.clientIP ELSE device.primaryIP END,
+    device.lastSeen = CASE WHEN device.lastSeen IS NULL OR event.timestamp > device.lastSeen THEN event.timestamp ELSE device.lastSeen END,
+    device.firstSeen = CASE WHEN device.firstSeen IS NULL OR event.timestamp < device.firstSeen THEN event.timestamp ELSE device.firstSeen END
 MERGE (domain:Domain {name: event.queryName})
   ON CREATE SET domain.firstSeen = event.timestamp
 SET domain.firstSeen = CASE WHEN domain.firstSeen IS NULL OR event.timestamp < domain.firstSeen THEN event.timestamp ELSE domain.firstSeen END,
@@ -198,6 +254,7 @@ MERGE (dnsEvent:DnsEvent {rawHash: event.rawHash})
 SET dnsEvent.firstSeen = CASE WHEN dnsEvent.firstSeen IS NULL OR event.timestamp < dnsEvent.firstSeen THEN event.timestamp ELSE dnsEvent.firstSeen END,
     dnsEvent.lastSeen = CASE WHEN dnsEvent.lastSeen IS NULL OR event.timestamp > dnsEvent.lastSeen THEN event.timestamp ELSE dnsEvent.lastSeen END
 MERGE (server)-[:OBSERVED]->(dnsEvent)
+MERGE (device)-[:HAS_CLIENT]->(client)
 MERGE (client)-[:ASKED]->(dnsEvent)
 MERGE (dnsEvent)-[:FOR_DOMAIN]->(domain)
 MERGE (dnsEvent)-[:QUERY_TYPE]->(queryType)
@@ -231,5 +288,129 @@ FOREACH (_ IN CASE WHEN shouldAggregate THEN [1] ELSE [] END |
         ELSE coalesce(queried.queryTypes, []) + event.queryType
       END,
       dnsEvent.aggregateApplied = true
+)
+`
+
+const writeEnrichmentsCypher = `
+UNWIND $items AS item
+MATCH (device:Device {key: item.deviceKey})
+MERGE (fingerprint:Fingerprint {id: item.fingerprintID})
+SET fingerprint.category = item.category,
+    fingerprint.target = item.target,
+    fingerprint.lastSeen = item.timestamp
+FOREACH (_ IN CASE WHEN item.category = "operating_system" THEN [1] ELSE [] END |
+  MERGE (target:OperatingSystem {name: item.target})
+  MERGE (device)-[rel:LIKELY_RUNNING]->(target)
+    ON CREATE SET rel.firstSeen = item.timestamp,
+                  rel.score = 0,
+                  rel.evidenceCount = 0,
+                  rel.evidenceHashes = []
+  SET rel.lastSeen = item.timestamp,
+      rel.score = coalesce(rel.score, 0) + item.score,
+      rel.confidence = CASE
+        WHEN abs(coalesce(rel.score, 0) + item.score) >= 70 THEN "high"
+        WHEN abs(coalesce(rel.score, 0) + item.score) >= 40 THEN "medium"
+        ELSE "low"
+      END,
+      rel.evidenceCount = coalesce(rel.evidenceCount, 0) + 1,
+      rel.evidenceHashes = CASE
+        WHEN item.evidenceHash IN coalesce(rel.evidenceHashes, []) THEN coalesce(rel.evidenceHashes, [])
+        ELSE coalesce(rel.evidenceHashes, []) + item.evidenceHash
+      END,
+      rel.lastFingerprint = item.fingerprintID,
+      rel.lastMatchedDomain = item.matchedDomain
+  MERGE (fingerprint)-[:MATCHED]->(target)
+)
+FOREACH (_ IN CASE WHEN item.category = "device_type" THEN [1] ELSE [] END |
+  MERGE (target:DeviceType {name: item.target})
+  MERGE (device)-[rel:LIKELY_IS]->(target)
+    ON CREATE SET rel.firstSeen = item.timestamp,
+                  rel.score = 0,
+                  rel.evidenceCount = 0,
+                  rel.evidenceHashes = []
+  SET rel.lastSeen = item.timestamp,
+      rel.score = coalesce(rel.score, 0) + item.score,
+      rel.confidence = CASE
+        WHEN abs(coalesce(rel.score, 0) + item.score) >= 70 THEN "high"
+        WHEN abs(coalesce(rel.score, 0) + item.score) >= 40 THEN "medium"
+        ELSE "low"
+      END,
+      rel.evidenceCount = coalesce(rel.evidenceCount, 0) + 1,
+      rel.evidenceHashes = CASE
+        WHEN item.evidenceHash IN coalesce(rel.evidenceHashes, []) THEN coalesce(rel.evidenceHashes, [])
+        ELSE coalesce(rel.evidenceHashes, []) + item.evidenceHash
+      END,
+      rel.lastFingerprint = item.fingerprintID,
+      rel.lastMatchedDomain = item.matchedDomain
+  MERGE (fingerprint)-[:MATCHED]->(target)
+)
+FOREACH (_ IN CASE WHEN item.category = "software" THEN [1] ELSE [] END |
+  MERGE (target:Software {name: item.target})
+  MERGE (device)-[rel:LIKELY_HAS]->(target)
+    ON CREATE SET rel.firstSeen = item.timestamp,
+                  rel.score = 0,
+                  rel.evidenceCount = 0,
+                  rel.evidenceHashes = []
+  SET rel.lastSeen = item.timestamp,
+      rel.score = coalesce(rel.score, 0) + item.score,
+      rel.confidence = CASE
+        WHEN abs(coalesce(rel.score, 0) + item.score) >= 70 THEN "high"
+        WHEN abs(coalesce(rel.score, 0) + item.score) >= 40 THEN "medium"
+        ELSE "low"
+      END,
+      rel.evidenceCount = coalesce(rel.evidenceCount, 0) + 1,
+      rel.evidenceHashes = CASE
+        WHEN item.evidenceHash IN coalesce(rel.evidenceHashes, []) THEN coalesce(rel.evidenceHashes, [])
+        ELSE coalesce(rel.evidenceHashes, []) + item.evidenceHash
+      END,
+      rel.lastFingerprint = item.fingerprintID,
+      rel.lastMatchedDomain = item.matchedDomain
+  MERGE (fingerprint)-[:MATCHED]->(target)
+)
+FOREACH (_ IN CASE WHEN item.category = "infrastructure" THEN [1] ELSE [] END |
+  MERGE (target:InfrastructureRole {name: item.target})
+  MERGE (device)-[rel:LIKELY_INFRASTRUCTURE]->(target)
+    ON CREATE SET rel.firstSeen = item.timestamp,
+                  rel.score = 0,
+                  rel.evidenceCount = 0,
+                  rel.evidenceHashes = []
+  SET rel.lastSeen = item.timestamp,
+      rel.score = coalesce(rel.score, 0) + item.score,
+      rel.confidence = CASE
+        WHEN abs(coalesce(rel.score, 0) + item.score) >= 70 THEN "high"
+        WHEN abs(coalesce(rel.score, 0) + item.score) >= 40 THEN "medium"
+        ELSE "low"
+      END,
+      rel.evidenceCount = coalesce(rel.evidenceCount, 0) + 1,
+      rel.evidenceHashes = CASE
+        WHEN item.evidenceHash IN coalesce(rel.evidenceHashes, []) THEN coalesce(rel.evidenceHashes, [])
+        ELSE coalesce(rel.evidenceHashes, []) + item.evidenceHash
+      END,
+      rel.lastFingerprint = item.fingerprintID,
+      rel.lastMatchedDomain = item.matchedDomain
+  MERGE (fingerprint)-[:MATCHED]->(target)
+)
+FOREACH (_ IN CASE WHEN item.category = "vendor" THEN [1] ELSE [] END |
+  MERGE (target:Vendor {name: item.target})
+  MERGE (device)-[rel:LIKELY_VENDOR]->(target)
+    ON CREATE SET rel.firstSeen = item.timestamp,
+                  rel.score = 0,
+                  rel.evidenceCount = 0,
+                  rel.evidenceHashes = []
+  SET rel.lastSeen = item.timestamp,
+      rel.score = coalesce(rel.score, 0) + item.score,
+      rel.confidence = CASE
+        WHEN abs(coalesce(rel.score, 0) + item.score) >= 70 THEN "high"
+        WHEN abs(coalesce(rel.score, 0) + item.score) >= 40 THEN "medium"
+        ELSE "low"
+      END,
+      rel.evidenceCount = coalesce(rel.evidenceCount, 0) + 1,
+      rel.evidenceHashes = CASE
+        WHEN item.evidenceHash IN coalesce(rel.evidenceHashes, []) THEN coalesce(rel.evidenceHashes, [])
+        ELSE coalesce(rel.evidenceHashes, []) + item.evidenceHash
+      END,
+      rel.lastFingerprint = item.fingerprintID,
+      rel.lastMatchedDomain = item.matchedDomain
+  MERGE (fingerprint)-[:MATCHED]->(target)
 )
 `

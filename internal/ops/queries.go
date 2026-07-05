@@ -27,6 +27,39 @@ ORDER BY events DESC, server ASC;`,
 RETURN count(client) AS uniqueClients;`,
 	},
 	{
+		Name:        "unique-devices",
+		Description: "Count persistent Device entities.",
+		Cypher: `MATCH (device:Device)
+RETURN count(device) AS uniqueDevices;`,
+	},
+	{
+		Name:        "device-client-map",
+		Description: "Show Device entities and their observed client IPs.",
+		Cypher: `MATCH (device:Device)-[:HAS_CLIENT]->(client:Client)
+RETURN device.key AS device,
+       device.primaryIP AS primaryIP,
+       collect(client.ip) AS clientIPs,
+       device.identitySource AS identitySource,
+       device.firstSeen AS firstSeen,
+       device.lastSeen AS lastSeen
+ORDER BY lastSeen DESC
+LIMIT 50;`,
+	},
+	{
+		Name:        "unenriched-devices",
+		Description: "Show devices without inferred OS, type, or software.",
+		Cypher: `MATCH (device:Device)
+WHERE NOT (device)-[:LIKELY_RUNNING]->(:OperatingSystem)
+  AND NOT (device)-[:LIKELY_IS]->(:DeviceType)
+  AND NOT (device)-[:LIKELY_HAS]->(:Software)
+RETURN device.key AS device,
+       device.primaryIP AS primaryIP,
+       device.firstSeen AS firstSeen,
+       device.lastSeen AS lastSeen
+ORDER BY lastSeen DESC
+LIMIT 50;`,
+	},
+	{
 		Name:        "unique-domains",
 		Description: "Count unique domains.",
 		Cypher: `MATCH (domain:Domain)
@@ -105,6 +138,7 @@ LIMIT 25;`,
 
 func ListQueries() []Query {
 	queries := append([]Query(nil), operationalQueries...)
+	queries = append(queries, enrichmentQueries...)
 	sort.Slice(queries, func(i, j int) bool {
 		return queries[i].Name < queries[j].Name
 	})
@@ -112,7 +146,7 @@ func ListQueries() []Query {
 }
 
 func FindQuery(name string) (Query, bool) {
-	for _, query := range operationalQueries {
+	for _, query := range append(append([]Query(nil), operationalQueries...), enrichmentQueries...) {
 		if query.Name == name {
 			return query, true
 		}

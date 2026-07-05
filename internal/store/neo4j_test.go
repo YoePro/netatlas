@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"netatlas/internal/config"
+	"netatlas/internal/fingerprint"
 	"netatlas/internal/model"
 )
 
@@ -69,11 +70,18 @@ func TestEventParamsIncludesGraphProperties(t *testing.T) {
 func TestSchemaStatementsCoverGraphIdentity(t *testing.T) {
 	want := []string{
 		"DnsServer",
+		"Device",
 		"Client",
 		"Domain",
 		"QueryType",
 		"IpAddress",
 		"DnsEvent",
+		"Fingerprint",
+		"OperatingSystem",
+		"DeviceType",
+		"Software",
+		"InfrastructureRole",
+		"Vendor",
 		"QUERIED",
 	}
 
@@ -84,6 +92,55 @@ func TestSchemaStatementsCoverGraphIdentity(t *testing.T) {
 	for _, label := range want {
 		if !strings.Contains(joined, label) {
 			t.Fatalf("schemaStatements missing %s", label)
+		}
+	}
+}
+
+func TestEnrichmentParamsIncludesEvidenceProperties(t *testing.T) {
+	timestamp := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	params := enrichmentParams([]fingerprint.Evidence{
+		{
+			DeviceKey:     "ip:192.168.1.10",
+			Category:      fingerprint.CategoryOperatingSystem,
+			Target:        "Windows",
+			Score:         35,
+			Confidence:    "low",
+			Timestamp:     timestamp,
+			EvidenceHash:  "hash",
+			FingerprintID: "os-windows-update",
+			MatchedDomain: "windowsupdate.com",
+		},
+	})
+	if len(params) != 1 {
+		t.Fatalf("len(params) = %d, want 1", len(params))
+	}
+	item := params[0]
+	assertParam(t, item, "deviceKey", "ip:192.168.1.10")
+	assertParam(t, item, "category", fingerprint.CategoryOperatingSystem)
+	assertParam(t, item, "target", "Windows")
+	assertParam(t, item, "score", 35)
+	assertParam(t, item, "confidence", "low")
+	assertParam(t, item, "timestamp", timestamp)
+	assertParam(t, item, "evidenceHash", "hash")
+	assertParam(t, item, "fingerprintID", "os-windows-update")
+	assertParam(t, item, "matchedDomain", "windowsupdate.com")
+}
+
+func TestWriteEnrichmentsCypherCoversCategoriesAndEvidence(t *testing.T) {
+	for _, want := range []string{
+		"LIKELY_RUNNING",
+		"LIKELY_IS",
+		"LIKELY_HAS",
+		"LIKELY_INFRASTRUCTURE",
+		"LIKELY_VENDOR",
+		"evidenceCount",
+		"evidenceHashes",
+		"confidence",
+		"score",
+		"lastMatchedDomain",
+	} {
+		if !strings.Contains(writeEnrichmentsCypher, want) {
+			t.Fatalf("writeEnrichmentsCypher missing %q", want)
 		}
 	}
 }
@@ -106,10 +163,25 @@ func TestWriteEventsCypherMaintainsAggregateRelationship(t *testing.T) {
 	}
 }
 
+func TestWriteEventsCypherCreatesDeviceIdentity(t *testing.T) {
+	for _, want := range []string{
+		"MERGE (device:Device {key: \"ip:\" + event.clientIP})",
+		"device.primaryIP",
+		"device.identitySource",
+		"MERGE (device)-[:HAS_CLIENT]->(client)",
+	} {
+		if !strings.Contains(writeEventsCypher, want) {
+			t.Fatalf("writeEventsCypher missing device identity fragment %q", want)
+		}
+	}
+}
+
 func TestWriteEventsCypherKeepsSeenTimestampsMonotonic(t *testing.T) {
 	for _, want := range []string{
 		"event.timestamp < server.firstSeen",
 		"event.timestamp > server.lastSeen",
+		"event.timestamp < device.firstSeen",
+		"event.timestamp > device.lastSeen",
 		"event.timestamp < client.firstSeen",
 		"event.timestamp > client.lastSeen",
 		"event.timestamp < domain.firstSeen",
