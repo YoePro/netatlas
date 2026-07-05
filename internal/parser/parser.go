@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"dnslog/internal/model"
-	"dnslog/internal/util"
+	"netatlas/internal/model"
+	"netatlas/internal/util"
 )
 
 const (

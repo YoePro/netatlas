@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"dnslog/internal/ingest"
+	"netatlas/internal/ingest"
 )
 
 func TestInputOffsetStatePathUsesInputBasename(t *testing.T) {

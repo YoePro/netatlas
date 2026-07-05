@@ -1,4 +1,4 @@
-module dnslog
+module netatlas
 
 go 1.25.0
 

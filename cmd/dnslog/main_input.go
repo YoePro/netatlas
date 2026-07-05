@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"dnslog/internal/ingest"
+	"netatlas/internal/ingest"
 )
 
 func inputOffsetStatePath(inputPath, configuredStatePath string) string {

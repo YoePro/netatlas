@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"dnslog/internal/config"
-	"dnslog/internal/parser"
+	"netatlas/internal/config"
+	"netatlas/internal/parser"
 )
 
 type genesisFilter struct {

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"dnslog/internal/config"
+	"netatlas/internal/config"
 )
 
 func TestNewGenesisFilter(t *testing.T) {

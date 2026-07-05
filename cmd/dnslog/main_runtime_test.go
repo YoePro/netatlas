@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"dnslog/internal/config"
+	"netatlas/internal/config"
 )
 
 func TestParseFailureSamplerWritesSamples(t *testing.T) {

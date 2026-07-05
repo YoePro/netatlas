@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 
-	"dnslog/internal/config"
-	"dnslog/internal/model"
+	"netatlas/internal/config"
+	"netatlas/internal/model"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )

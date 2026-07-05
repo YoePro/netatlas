@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"dnslog/internal/config"
-	"dnslog/internal/model"
+	"netatlas/internal/config"
+	"netatlas/internal/model"
 )
 
 type recordingStore struct {

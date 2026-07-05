@@ -1,9 +1,8 @@
-dnslog
+NetAtlas
   purpose:
-    Read DNS logs from one DNS server instance.
-    Normalize DNS events.
-    Enrich events with minimal metadata.
-    Store structured observations in Neo4J.
+    Build a local LAN observability and risk-analysis graph.
+    Start with DNS log observations.
+    Preserve useful network knowledge without becoming a raw log archive.
 
   runs on:
     Primary DNS server
@@ -21,7 +20,7 @@ Architecture
 
 Project structure:
 
-dnslog/
+netatlas/
     cmd/dnslog/
         main.go
         main_help.go
@@ -1022,6 +1021,17 @@ Scope:
 - README describes NetAtlas as LAN observability and risk-analysis.
 - Clarify that NetAtlas is not a surveillance/log-archive tool.
 - Keep DNS collector isolated from future collectors.
+
+Status:
+
+Implemented in 0.7.
+
+Implementation notes:
+- Go module renamed to `netatlas`.
+- Internal imports now use `netatlas/internal/...`.
+- Repository/project identity is NetAtlas while the current DNS collector binary remains `dnslog`.
+- Added README.md with NetAtlas purpose, boundaries, build/test commands, and current DNS collector usage.
+- README explicitly states that NetAtlas is not a surveillance product or browsing-history/raw-log archive.
 
 ------------------------------------------------------------------------------------------------------------------------
 0.8 Development - Entity Resolution

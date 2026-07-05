@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"dnslog/internal/config"
+	"netatlas/internal/config"
 )
 
 func TestPrintSystemCheck(t *testing.T) {

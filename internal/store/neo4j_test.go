@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"dnslog/internal/config"
-	"dnslog/internal/model"
+	"netatlas/internal/config"
+	"netatlas/internal/model"
 )
 
 func TestNewNeo4jStoreCarriesDebugFlagInDryRun(t *testing.T) {

@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"dnslog/internal/config"
-	"dnslog/internal/ingest"
+	"netatlas/internal/config"
+	"netatlas/internal/ingest"
 )
 
 var parseFailures = newParseFailureSampler()

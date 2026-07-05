@@ -14,13 +14,13 @@ import (
 	"syscall"
 	"time"
 
-	"dnslog/internal/analytics"
-	"dnslog/internal/config"
-	"dnslog/internal/ingest"
-	"dnslog/internal/model"
-	"dnslog/internal/ops"
-	"dnslog/internal/parser"
-	"dnslog/internal/store"
+	"netatlas/internal/analytics"
+	"netatlas/internal/config"
+	"netatlas/internal/ingest"
+	"netatlas/internal/model"
+	"netatlas/internal/ops"
+	"netatlas/internal/parser"
+	"netatlas/internal/store"
 )
 
 type parseResult struct {

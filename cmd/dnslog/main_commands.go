@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"dnslog/internal/config"
-	"dnslog/internal/store"
+	"netatlas/internal/config"
+	"netatlas/internal/store"
 )
 
 func printSystemCheck(w io.Writer) {
