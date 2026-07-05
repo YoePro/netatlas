@@ -1,3 +1,6 @@
+.git/
+.vscode/
 config.ini
 state/
+bin/
 *.log

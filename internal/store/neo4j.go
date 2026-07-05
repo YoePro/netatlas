@@ -20,11 +20,12 @@ type Neo4jStore struct {
 	driver   neo4j.DriverWithContext
 	database string
 	dryRun   bool
+	debug    bool
 }
 
 func NewNeo4jStore(ctx context.Context, cfg *config.Config) (*Neo4jStore, error) {
 	if cfg.DryRun {
-		return &Neo4jStore{dryRun: true}, nil
+		return &Neo4jStore{dryRun: true, debug: cfg.Debug}, nil
 	}
 
 	driver, err := neo4j.NewDriverWithContext(
@@ -43,6 +44,7 @@ func NewNeo4jStore(ctx context.Context, cfg *config.Config) (*Neo4jStore, error)
 	store := &Neo4jStore{
 		driver:   driver,
 		database: cfg.Neo4jDatabase,
+		debug:    cfg.Debug,
 	}
 	if err := store.EnsureSchema(ctx); err != nil {
 		_ = driver.Close(ctx)
@@ -61,7 +63,9 @@ func (s *Neo4jStore) Close(ctx context.Context) error {
 
 func (s *Neo4jStore) EnsureSchema(ctx context.Context) error {
 	if s.dryRun {
-		log.Printf("[dry-run] would ensure neo4j schema")
+		if s.debug {
+			log.Printf("[dry-run] would ensure neo4j schema")
+		}
 		return nil
 	}
 
@@ -91,7 +95,9 @@ func (s *Neo4jStore) WriteBatch(ctx context.Context, batch []model.DNSEvent) err
 		return nil
 	}
 	if s.dryRun {
-		log.Printf("[dry-run] would write %d dns events", len(batch))
+		if s.debug {
+			log.Printf("[dry-run] would write %d dns events", len(batch))
+		}
 		return nil
 	}
 
@@ -121,17 +127,19 @@ func eventParams(batch []model.DNSEvent) []map[string]any {
 	events := make([]map[string]any, 0, len(batch))
 	for _, event := range batch {
 		events = append(events, map[string]any{
-			"timestamp":    event.Timestamp,
-			"serverName":   event.ServerName,
-			"serverRole":   event.ServerRole,
-			"clientIP":     event.ClientIP,
-			"queryName":    event.QueryName,
-			"queryType":    event.QueryType,
-			"responseCode": event.ResponseCode,
-			"answerIP":     event.AnswerIP,
-			"protocol":     event.Protocol,
-			"rawLine":      event.RawLine,
-			"rawHash":      event.RawHash,
+			"timestamp":      event.Timestamp,
+			"serverName":     event.ServerName,
+			"serverRole":     event.ServerRole,
+			"clientIP":       event.ClientIP,
+			"queryName":      event.QueryName,
+			"queryClass":     event.QueryClass,
+			"queryType":      event.QueryType,
+			"responseCode":   event.ResponseCode,
+			"answerIP":       event.AnswerIP,
+			"protocol":       event.Protocol,
+			"sourceCategory": event.SourceCategory,
+			"rawLine":        event.RawLine,
+			"rawHash":        event.RawHash,
 		})
 	}
 	return events
@@ -179,9 +187,11 @@ MERGE (dnsEvent:DnsEvent {rawHash: event.rawHash})
     dnsEvent.serverRole = event.serverRole,
     dnsEvent.clientIP = event.clientIP,
     dnsEvent.queryName = event.queryName,
+    dnsEvent.queryClass = event.queryClass,
     dnsEvent.queryType = event.queryType,
     dnsEvent.responseCode = event.responseCode,
     dnsEvent.protocol = event.protocol,
+    dnsEvent.sourceCategory = event.sourceCategory,
     dnsEvent.rawLine = event.rawLine,
     dnsEvent.firstSeen = event.timestamp,
     dnsEvent.aggregateApplied = false

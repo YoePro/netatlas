@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 )
 
 type FileID struct {
@@ -16,10 +17,13 @@ type FileID struct {
 }
 
 type OffsetState struct {
-	Path   string `json:"path"`
-	Offset int64  `json:"offset"`
-	Size   int64  `json:"size"`
-	FileID FileID `json:"file_id"`
+	Version   int       `json:"version"`
+	Path      string    `json:"path"`
+	Basename  string    `json:"basename"`
+	Offset    int64     `json:"offset"`
+	Size      int64     `json:"size"`
+	FileID    FileID    `json:"file_id"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type OffsetStore struct {
@@ -28,6 +32,18 @@ type OffsetStore struct {
 
 func NewOffsetStore(path string) *OffsetStore {
 	return &OffsetStore{path: path}
+}
+
+func (s *OffsetStore) Path() string {
+	return s.path
+}
+
+func (s *OffsetStore) EnsureDir() error {
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create offset state directory %q: %w", dir, err)
+	}
+	return nil
 }
 
 func (s *OffsetStore) Load() (OffsetState, error) {
@@ -43,14 +59,24 @@ func (s *OffsetStore) Load() (OffsetState, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return OffsetState{}, fmt.Errorf("parse offset state %q: %w", s.path, err)
 	}
+	if state.Version == 0 && (state.Path != "" || state.Offset > 0 || state.Size > 0 || state.FileID != (FileID{})) {
+		state.Version = 1
+	}
 
 	return state, nil
 }
 
 func (s *OffsetStore) Save(state OffsetState) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return fmt.Errorf("create offset state directory: %w", err)
+	if err := s.EnsureDir(); err != nil {
+		return err
 	}
+	if state.Version < 2 {
+		state.Version = 2
+	}
+	if state.Basename == "" && state.Path != "" {
+		state.Basename = filepath.Base(state.Path)
+	}
+	state.UpdatedAt = time.Now()
 
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -74,11 +100,18 @@ func CurrentState(path string, info os.FileInfo) (OffsetState, error) {
 	if err != nil {
 		return OffsetState{}, err
 	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
 
 	return OffsetState{
-		Path:   path,
-		Size:   info.Size(),
-		FileID: fileID,
+		Version:   2,
+		Path:      absPath,
+		Basename:  filepath.Base(path),
+		Size:      info.Size(),
+		FileID:    fileID,
+		UpdatedAt: time.Now(),
 	}, nil
 }
 

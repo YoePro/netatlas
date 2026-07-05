@@ -22,7 +22,7 @@ Architecture
 Project structure:
 
 dnslog/
-    cmd/main/
+    cmd/dnslog/
         main.go
         main_help.go
 
@@ -57,7 +57,7 @@ Current implementation status:
 
     0.3.2
         Implemented in working tree.
-        Every ingestion run reports performance baseline metrics.
+        Ingestion can report performance baseline metrics when telemetry is enabled.
 
     0.4
         Implemented in working tree.
@@ -67,9 +67,37 @@ Current implementation status:
         Implemented in working tree.
         Built-in operational Cypher queries are available through `dnslog queries`.
 
+    0.5
+        Implemented in working tree.
+        Built-in analytics Cypher reports are available through `dnslog analytics`.
+
+    0.5.1
+        Implemented in working tree.
+        Known BIND non-query categories are ignored and counted by category.
+
+    0.5.2
+        Implemented in working tree.
+        BIND query-errors lines with client IP are parsed into DnsEvent observations.
+
+    0.5.4
+        Implemented in working tree.
+        Remaining known BIND parser noise is classified as ignored or notable.
+
+    0.6.1
+        Implemented in working tree.
+        Offset state parent directory is created automatically for non-dry-run ingestion.
+
     CLI help
         Implemented in working tree.
         `dnslog help`, `dnslog -h`, and `dnslog --help` explain usage, config, pipeline, and graph model.
+
+Out-of-roadmap telemetry
+        Implemented in working tree.
+        Runtime telemetry is opt-in through `-telemetry`.
+
+    Out-of-roadmap BIND noise classification
+        Implemented in working tree.
+        Benign BIND noise is ignored, while interesting rcodes are counted as notable.
 
 The application shall be divided into four independent stages:
 
@@ -131,6 +159,9 @@ Scope:
 - Support dry-run mode.
 - Report ingestion statistics.
 
+Dry-run rule:
+- dry_run=true must never update persistent offset state.
+
 Output:
 
 A reliable log ingestion service.
@@ -153,6 +184,7 @@ Scope:
 - Exit summary.
 - Duplicate detection.
 - Configurable ignore lists.
+- Do not commit offsets during dry-run.
 
 ------------------------------------------------------------------------------------------------------------------------
 0.3 Development - Graph model
@@ -239,12 +271,46 @@ Test datasets:
 - Entire production log
 
 Implementation notes:
-- Metrics are printed after each ingestion run.
+- Metrics are printed only when `-telemetry` is set.
 - Dry-run mode can be used for parse/pipeline baseline before Neo4J is available.
 - Neo4J write throughput uses the same written-event counter and becomes real database throughput when dry_run=false.
 - CPU utilization is process CPU time divided by wall-clock ingestion time.
 - Peak memory is sampled from Go runtime allocation during ingestion.
 - Batch efficiency is written events divided by theoretical full batch capacity.
+
+------------------------------------------------------------------------------------------------------------------------
+Out-of-roadmap change - Opt-in runtime telemetry
+------------------------------------------------------------------------------------------------------------------------
+
+Reason:
+Operational measurements are useful before adding more analytics, but normal ingestion output should stay quiet.
+
+Scope:
+- Add `-telemetry` CLI flag.
+- Keep default output to a compact ingestion summary.
+- Show runtime measurements only when `-telemetry` is set.
+- Include total runtime, parse throughput, parsed event throughput, write throughput, peak memory, CPU time,
+  CPU utilization, and batch efficiency.
+- Keep telemetry local to stdout; do not export it externally.
+
+Debug logging:
+- Dry-run batch details are printed only when `-debug` is set.
+- Normal dry-run output should stay compact.
+
+------------------------------------------------------------------------------------------------------------------------
+Out-of-roadmap change - BIND noise and notable rcode classification
+------------------------------------------------------------------------------------------------------------------------
+
+Reason:
+Large BIND logs contain non-query operational noise. Some lines are harmless, while rcodes such as REFUSED
+and SERVFAIL are operationally interesting and should not disappear into generic ignored counts.
+
+Scope:
+- Treat query timeout noise as ignored.
+- Treat known non-query BIND categories such as dnssec, general, and lame-servers as ignored unless they contain
+  notable rcodes.
+- Count query failed REFUSED and unexpected rcode SERVFAIL as notable.
+- Keep notable lines out of the DnsEvent graph until a dedicated diagnostic model exists.
 
 ------------------------------------------------------------------------------------------------------------------------
 0.4 Development - Aggregate graph
@@ -329,42 +395,886 @@ Scope:
 - Clients with sudden query increase
 - Domains with sudden query increase
 - FirstSeen / LastSeen reports
+- Print all analytics reports from `dnslog analytics`
+- Print one named report from `dnslog analytics <name>`
+
+Implementation notes:
+- Reports are bundled as named Cypher snippets.
+- Report printing does not require config loading or Neo4J connectivity.
+- Runtime execution can be added later once the Neo4J container workflow is stable.
+- Aggregate-based reports use (Client)-[:QUERIED]->(Domain).
+- Change-detection reports use DnsEvent timestamps because time-bucket aggregates do not exist yet.
 
 ------------------------------------------------------------------------------------------------------------------------
-0.6 Development - Device fingerprinting
+0.5.1 Development - BIND non-query classification
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Reduce parse failures by classifying known BIND log categories.
+
+Scope:
+- Recognize rate-limit lines
+- Recognize network lines
+- Recognize xfer-in lines
+- Treat them as ignored, not parse failures
+- Count ignored_by_category
+
+Implementation notes:
+- Query timeout noise is counted under ignored_by_category timeout.
+- network listening/no-longer-listening lines are counted under network.
+- Successful xfer-in transfer-started lines are counted under xfer_in.
+- Generic dnssec/general/lame-servers noise is counted under bind_noise.
+- Filtered domains and local/reverse lookup filtering are counted under filtered.
+
+------------------------------------------------------------------------------------------------------------------------
+0.5.2 Development - BIND query-errors parser
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Parse useful DNS events from BIND query-errors lines.
+
+Scope:
+- Parse client IP
+- Parse query name
+- Parse DNS class
+- Parse query type
+- Parse response code
+- Store responseCode=REFUSED/SERVFAIL/etc
+- Mark sourceCategory=query-errors
+
+Implementation notes:
+- Query-errors lines with client IP become normal DnsEvent observations.
+- Query-errors lines without client IP remain notable instead of creating an empty Client node.
+- Query timeout failures remain ignored noise unless they later prove operationally useful.
+
+------------------------------------------------------------------------------------------------------------------------
+0.5.3 BIND log category classification
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Stop treating known non-query BIND log categories as parse failures.
+
+Classify as ignored:
+- rate-limit
+- resolver
+- notify
+- config
+- zoneload
+
+Implementation notes:
+- These categories are counted separately in ignored_by_category.
+- query failed REFUSED/SERVFAIL still remains notable or parsed as query-errors when possible.
+- query failed timed out remains ignored as timeout noise.
+
+Do not create DNSEvent for these yet.
+Count them by category.
+
+------------------------------------------------------------------------------------------------------------------------
+0.5.4 Parser cleanup
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Reduce remaining known parse failures to near zero.
+
+Add:
+- trust-anchor-telemetry => ignored category bind_noise
+- query-errors + rate limit drop => ignored category rate_limit
+- default + Accepting TCP connection failed => ignored category socket
+- security + "query (cache)" + "denied" => notable category security_denied_cache
+
+Implementation notes:
+- security_denied_cache is counted under notable_by_category.
+- socket is counted under ignored_by_category.
+- trust-anchor-telemetry is folded into bind_noise.
+- rate-limit drops emitted through query-errors remain ignored noise.
+
+------------------------------------------------------------------------------------------------------------------------
+0.6 Development - Tuning & Operations
 ------------------------------------------------------------------------------------------------------------------------
 
 Goal:
 
-Identify device types from DNS behaviour.
+Make dnslog easier to tune, safer to run on large historical logs, and better suited for cron/systemd timer operation.
+
+Purpose:
+
+dnslog already performs well, but different machines need different runtime behaviour.
+A Raspberry Pi 4, an Intel server, and a future always-on service should not necessarily use the same throughput profile.
+
+------------------------------------------------------------------------------------------------------------------------
+0.6.0 Development - Runtime tuning profile
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Add configurable runtime profiles for CPU/load behaviour.
+
+Scope:
+
+- Add ingest runtime mode:
+  - max
+  - medium
+  - low
+
+Config:
+
+[ingest]
+runtime_mode = medium
+
+Behaviour:
+
+max:
+  - Use configured worker_count directly.
+  - No artificial delay.
+  - Intended for benchmarks and manual bulk ingestion.
+
+medium:
+  - Use configured worker_count.
+  - Add small cooperative delay between processed lines or batches.
+  - Intended for normal cron/systemd timer operation.
+
+low:
+  - Reduce effective worker count or add larger cooperative delay.
+  - Intended for Raspberry Pi or production DNS servers where dnslog must stay polite.
+
+Notes:
+
+- runtime_mode should not change parsing correctness.
+- It only affects throughput and CPU pressure.
+
+Status:
+
+Implemented in 0.6.x operations pass.
+
+Implementation notes:
+- runtime_mode=max does not add cooperative delay.
+- runtime_mode=medium adds a small periodic cooperative pause.
+- runtime_mode=low adds a stronger per-line cooperative pause for small machines.
+
+------------------------------------------------------------------------------------------------------------------------
+0.6.1 Development - Offset state directory creation
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Make offset handling robust on fresh installs.
+
+Scope:
+
+- Automatically create the parent directory for offset_state_path if missing.
+- Fail clearly if the path cannot be created.
+- Preserve safe permissions.
+- Log where offset state is stored.
+- Do not create offset state directory during dry-run.
+
+Example:
+
+state/dnslog.offset.json
+
+If state/ does not exist, create it.
+
+Implementation notes:
+- Parent directory is created with 0700 permissions.
+- Offset state path is logged in debug mode.
+- dry_run=true keeps offset state untouched and does not create state directories.
+
+------------------------------------------------------------------------------------------------------------------------
+0.6.2 Development - Genesis filter
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Prevent accidental ingestion of very old historical logs.
+
+Scope:
+
+- Add configurable genesis mode.
+- Skip log lines older than the configured genesis boundary.
+- Apply before expensive processing when possible.
+
+Config:
+
+[ingest]
+genesis = all
+
+Allowed values:
+
+all:
+  Process everything.
+
+today:
+  Skip everything older than today.
+
+3h:
+  Skip everything older than 3 hours.
+
+24h:
+  Skip everything older than 24 hours.
+
+7d:
+  Skip everything older than 7 days.
+
+30d:
+  Skip everything older than 30 days.
+
+custom:
+  Use genesis_after.
+
+genesis_after = 2026-07-05T00:00:00+02:00
+
+Notes:
+
+- Default should be all for backward compatibility.
+- Genesis filtering must be reported in telemetry.
+- Skipped-by-genesis should not count as parse failures.
+
+Status:
+
+Implemented in 0.6.2.
+
+Implementation notes:
+- [ingest] genesis defaults to all.
+- Supported values: all, today, 3h, 24h, 7d, 30d, custom.
+- genesis=custom uses RFC3339 genesis_after.
+- Filtering is applied before full parser processing when a timestamp can be extracted.
+- Skipped rows advance offset state in normal mode, but dry_run still never writes offset state.
+- skipped_genesis is reported in the normal summary and skipped_by_genesis is included in telemetry.
+
+------------------------------------------------------------------------------------------------------------------------
+0.6.3 Development - Input file override
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Allow temporary ingestion of samples or alternate log files without editing config.ini.
+
+Scope:
+
+- Add CLI flag:
+  -input /path/to/default.log
+
+Behaviour:
+
+- If -input is provided, it overrides [log] file_path.
+- The active input path must be printed in normal interactive mode.
+- Offset handling must be considered carefully.
+
+Important:
+
+When using -input, the offset key must either:
+- include the input path/file identity, or
+- require explicit -offset-state override,
+so sample runs do not corrupt the production offset.
+
+Implementation notes:
+
+- Offset filename shall default to:
+
+    state/<basename>-dnslog-offset.json
+
+- Existing dnslog.offset.json shall be migrated automatically
+  on first run if present.
+
+- Offset state version shall be introduced.
+
+- Offset metadata shall contain:
+    - version
+    - full input path
+    - basename
+    - byte offset
+    - file size
+    - device id
+    - inode
+    - last update time
+
+- The stored path shall be verified against the current input file.
+
+- If the offset belongs to another input source,
+  dnslog shall refuse to continue unless an explicit
+  override is supplied.
+
+- Automatic migration from version 1 to version 2 shall
+  preserve the existing offset.
+
+Status:
+
+Implemented in 0.6.3.
+
+Implementation notes:
+- Added `-input` to override [log] file_path.
+- Added `-offset-state` as an explicit override for advanced/manual state handling.
+- Without `-offset-state`, `-input` uses `state/<input-basename>-dnslog-offset.json`.
+- Offset state is versioned and stores full input path, basename, offset, size, file identity, and update time.
+- If the input-derived state file already belongs to another input source, it is moved aside to a unique
+  collision filename before the new input starts.
+- This handles reused rotated filenames such as `named.log.1` from different weeks without scanning the
+  whole state directory unless a direct filename collision exists.
+- Existing default `dnslog.offset.json` is migrated to the input-derived state path only when it matches the
+  active input.
+
+------------------------------------------------------------------------------------------------------------------------
+0.6.4 Development - Quiet cron mode
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Make dnslog suitable for cron or systemd timer execution.
+
+Scope:
+
+- Add log mode:
+  - normal
+  - quiet
+  - verbose
+
+Config:
+
+[ingest]
+log_mode = normal
+
+CLI:
+
+-quiet
+-verbose
+
+Behaviour:
+
+quiet:
+  - Print only errors and final summary if something notable happened.
+  - No per-batch dry-run messages.
+  - No normal progress noise.
+
+normal:
+  - Current behaviour, but avoid excessive line-by-line noise.
+
+verbose:
+  - Include parser failures, ignored categories, and detailed telemetry.
+
+Notes:
+
+- Cron should not receive mail for successful boring runs.
+- Errors must still be visible.
+
+Status:
+
+Implemented in 0.6.4.
+
+Implementation notes:
+- Added [ingest] log_mode with quiet, normal, and verbose.
+- Added CLI flags `-quiet` and `-verbose`.
+- quiet suppresses input/progress output and boring successful summaries.
+- verbose enables debug-style parser failure logging and telemetry.
+
+------------------------------------------------------------------------------------------------------------------------
+0.6.5 Development - Config example updates
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Keep config.example.ini and local config.ini aligned with new runtime options.
+
+Add:
+
+[ingest]
+runtime_mode = medium
+genesis = all
+genesis_after =
+log_mode = normal
+
+Notes:
+
+- config.example.ini should document safe defaults.
+- config.ini remains local and untracked.
+
+Status:
+
+Implemented in 0.6.5.
+
+Implementation notes:
+- config.example.ini now includes runtime_mode, log_mode, dry_run_updates_offset,
+  genesis, progress_interval, parse_failure_samples, and parse_failure_path.
+
+------------------------------------------------------------------------------------------------------------------------
+0.6.6 Development - System check
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Add a helper command that recommends sane runtime settings for the current machine.
+
+Command:
+
+dnslog system-check
+
+Scope:
+
+- Detect CPU count.
+- Detect available memory.
+- Detect architecture.
+- Detect OS.
+- Recommend:
+  - worker_count
+  - batch_size
+  - runtime_mode
+  - flush_interval
+
+Example output:
+
+Detected:
+  arch: linux/arm64
+  cpu: 4
+  memory: 4 GB
+
+Recommended:
+  worker_count = 3
+  batch_size = 2000
+  runtime_mode = medium
+  flush_interval = 5s
+
+Notes:
+
+- system-check should not require Neo4J.
+- system-check should not require log file access.
+- It should only recommend values, not edit config.ini initially.
+
+Status:
+
+Implemented in 0.6.6.
+
+Implementation notes:
+- Added `dnslog system-check`.
+- Reports OS/architecture, CPU count, memory when available, and recommended ingest settings.
+- Does not load config, touch log files, or connect to Neo4J.
+
+------------------------------------------------------------------------------------------------------------------------
+0.6.7 Development - Benchmark mode
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Make tuning repeatable.
+
+Scope:
+- Add dnslog benchmark
+- Run dry-run against selected file
+- Print comparable telemetry
+- Optionally test worker_count values automatically
+
+Status:
+
+Implemented in 0.6.7.
+
+Implementation notes:
+- Added `dnslog benchmark`.
+- Benchmark forces dry_run=true and dry_run_updates_offset=false.
+- Benchmark prints telemetry and does not move offset state.
+- Benchmark uses an isolated temporary offset state so runs are comparable and do not depend on production offsets.
+- Added `-benchmark-workers` for automatic worker_count sweeps.
+- Supported worker sweep formats: comma lists such as `1,2,4` and ranges such as `1-4`.
+
+------------------------------------------------------------------------------------------------------------------------
+0.6.8 Development - Safe dry-run semantics
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Avoid accidental offset movement during tests.
+
+Scope:
+- Decide explicitly if dry-run updates offset or not
+- Add config:
+    dry_run_updates_offset = false
+- Default should be false
+
+Status:
+
+Implemented in 0.6.8.
+
+Implementation notes:
+- dry_run=true keeps offset untouched by default.
+- dry_run_updates_offset=true explicitly allows offset writes during dry-run workflows.
+
+------------------------------------------------------------------------------------------------------------------------
+0.6.9 Development - Progress reporting
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Make large historical runs understandable.
+
+Scope:
+- Print progress every N lines or N seconds in normal/verbose mode
+- Show percent if file size is known
+- Show ETA only if stable enough
+- Suppress in quiet mode
+
+Status:
+
+Implemented in 0.6.9.
+
+Implementation notes:
+- Added [ingest] progress_interval.
+- Progress prints lines, parsed events, byte offset, percent when size is known, and ETA after a stable interval.
+- quiet mode suppresses progress.
+
+------------------------------------------------------------------------------------------------------------------------
+0.6.10 Development - Parser failure sampling
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Keep logs useful without flooding output.
+
+Scope:
+- Count parse failures
+- Save first N unique unknown formats
+- Optionally write unknown lines to:
+    state/parse-failures.log
+- Avoid printing thousands of repeated failures
+
+Status:
+
+Implemented in 0.6.10.
+
+Implementation notes:
+- Added parse_failure_samples and parse_failure_path.
+- Parse failures are sampled uniquely and appended to the configured file.
+- Verbose mode logs parse failures; normal mode avoids per-line flood.
+
+------------------------------------------------------------------------------------------------------------------------
+0.6.11 Development - Config validation
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Fail early on bad configuration.
+
+Scope:
+- Validate runtime_mode
+- Validate log_mode
+- Validate genesis values
+- Validate batch_size > 0
+- Validate worker_count > 0
+- Validate Neo4J config when dry_run=false
+- Validate paths and permissions
+
+Status:
+
+Implemented in 0.6.11.
+
+Implementation notes:
+- Config validation now covers runtime_mode, log_mode, genesis, positive ingest values,
+  retry values, offset path, server name, parse failure settings, and Neo4J password when dry_run=false.
+- Preflight performs runtime path/read/write checks.
+
+------------------------------------------------------------------------------------------------------------------------
+0.6.12 Development - Preflight command
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Check if dnslog can run before actually ingesting.
+
+Command:
+  dnslog preflight
+
+Scope:
+- Check config
+- Check log file readable
+- Check offset state writable
+- Check Neo4J reachable if dry_run=false
+- Check constraints/index creation ability
+
+Status:
+
+Implemented in 0.6.12.
+
+Implementation notes:
+- Added `dnslog preflight`.
+- Checks log file readability and offset state directory writability.
+- When dry_run=false, connects to Neo4J and runs schema creation through the normal store setup.
+
+------------------------------------------------------------------------------------------------------------------------
+0.6.13 Development - Lock file
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Prevent two dnslog runs from using the same offset file at the same time.
+
+Scope:
+- Create lock per offset state file
+- Refuse to start if already locked
+- Clean stale lock carefully
+
+Status:
+
+Implemented in 0.6.13.
+
+Implementation notes:
+- Runs that can write offset state acquire `<offset_state_path>.lock`.
+- Active locks prevent concurrent ingestion on the same offset.
+- Stale locks are removed only when their recorded PID no longer exists.
+
+------------------------------------------------------------------------------------------------------------------------
+0.7 Development - Project rename to NetAtlas
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Rename the project from dnslog to NetAtlas while keeping dnslog as the first collector.
+
+Scope:
+- Repository/project name becomes netatlas.
+- Current binary may remain dnslog for now.
+- README describes NetAtlas as LAN observability and risk-analysis.
+- Clarify that NetAtlas is not a surveillance/log-archive tool.
+- Keep DNS collector isolated from future collectors.
+
+------------------------------------------------------------------------------------------------------------------------
+0.8 Development - Entity Resolution
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Create persistent network entities by correlating observations from multiple collectors.
+
+Scope:
+
+- Introduce Device as the primary network entity.
+- Merge observations from multiple sources.
+- Maintain confidence for inferred properties.
+- Preserve evidence for every inferred attribute.
+- Support future collectors without changing the core model.
+
+Future observation sources:
+
+- DNS
+- DHCP
+- ARP
+- Home Assistant
+- Fail2ban
+- Firewall
+- mDNS
+- SSDP
+- LLDP
+
+------------------------------------------------------------------------------------------------------------------------
+0.8.0 Development - Fingerprint rule engine
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Create a configurable rule engine that converts repeated DNS behaviour into confidence-based observations.
+
+Scope:
+
+- Load fingerprint definitions from configuration files.
+- Support weighted scoring.
+- Support positive and negative indicators.
+- Support confidence levels.
+- Multiple fingerprints may match the same client.
+
+Fingerprint categories:
+
+- Operating System
+- Device Type
+- Software
+- Infrastructure
+- Vendor
+
+Notes:
+
+Rules shall be data-driven rather than hardcoded whenever practical.
+
+------------------------------------------------------------------------------------------------------------------------
+0.8.1 Development - Operating system identification
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Identify probable operating systems from DNS behaviour.
+
+Scope:
+
+Detect:
+
+- Windows
+- Linux
+- Android
+- Apple/iOS
 
 Examples:
 
-Apple
-
-- apple.com
-- icloud.com
-- time.apple.com
-
-Android
-
-- connectivitycheck.gstatic.com
-- mtalk.google.com
-
-Microsoft
+Windows:
 
 - msftconnecttest.com
 - windowsupdate.com
+- download.windowsupdate.com
+- microsoft.com
 
-IoT
+Android:
 
-- pool.ntp.org
-- firmware.vendor.com
-- mqtt brokers
+- connectivitycheck.gstatic.com
+- mtalk.google.com
+- play.googleapis.com
+- android.clients.google.com
 
-Future:
+Linux:
 
-Each fingerprint contributes confidence points rather than making binary decisions.
+No single Linux fingerprint exists.
+- ubuntu
+
+Instead combine evidence from:
+
+- package repositories
+- NTP usage
+- update mirrors
+- distribution-specific domains
+
+Notes:
+
+Linux detection shall generally produce lower confidence than Windows or Android.
+
+------------------------------------------------------------------------------------------------------------------------
+0.8.2 Development - Device type identification
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Identify probable device classes.
+
+Scope:
+
+Possible device types:
+
+- Desktop
+- Laptop
+- Server
+- NAS
+- Printer
+- Mobile phone
+- Tablet
+- Smart TV
+- Media player
+- Network equipment
+- IoT device
+
+Notes:
+
+Device type is independent from operating system.
+
+
+------------------------------------------------------------------------------------------------------------------------
+0.8.3 Development - Infrastructure identification
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Identify infrastructure devices.
+
+Scope:
+
+Recognise:
+
+- Routers
+- Switches
+- Access Points
+- DNS servers
+- DHCP servers
+- Hypervisors
+- Containers
+- Virtual Machines
+
+Purpose:
+
+Infrastructure devices should become first-class citizens in the graph rather than ordinary clients.
+
+------------------------------------------------------------------------------------------------------------------------
+0.8.4 Development - Software identification
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Identify major software and services running inside the LAN.
+
+Scope:
+
+Examples:
+
+- Home Assistant
+- Docker
+- Kubernetes
+- MQTT brokers
+- Pi-hole
+- Jellyfin
+- Plex
+- Steam
+- Syncthing
+- Tailscale
+- Zerotier
+
+Notes:
+
+Software observations increase confidence but should not determine device identity alone.
+
+------------------------------------------------------------------------------------------------------------------------
+0.8.5 Development - Confidence engine
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Calculate confidence rather than binary matches.
+
+Scope:
+
+Each observation contributes points.
+
+Example:
+
+Windows:
+
++35 Windows Update
++20 MS Connectivity Test
++15 Microsoft telemetry
+
+Total:
+
+70%
+
+Confidence:
+
+High
+
+Notes:
+
+Confidence shall increase over time as more observations are collected.
+Confidence may also decrease when observations become stale.
+
+------------------------------------------------------------------------------------------------------------------------
+0.8.6 Development - Neo4J enrichment model
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+
+Represent enriched knowledge inside the graph.
+
+Nodes:
+
+(:Fingerprint)
+
+(:OperatingSystem)
+
+(:DeviceType)
+
+(:Software)
+
+Relationships:
+
+(:Client)-[:LIKELY_RUNNING]->(:OperatingSystem)
+
+(:Client)-[:LIKELY_IS]->(:DeviceType)
+
+(:Client)-[:LIKELY_HAS]->(:Software)
+
+Properties:
+
+- confidence
+- score
+- firstSeen
+- lastSeen
+- evidenceCount
+
+Notes:
+
+Evidence should always remain traceable.
 
 ------------------------------------------------------------------------------------------------------------------------
 Future expansion sources
@@ -416,7 +1326,9 @@ Home Assistant
     (:Client {ip})-[:MATCHES]->(:HADevice)
     (:HADevice)-[:HAS_ENTITY]->(:HAEntity)
 
-0.7 Future - External observation sources
+------------------------------------------------------------------------------------------------------------------------
+0.9 Future - External observation sources
+------------------------------------------------------------------------------------------------------------------------
 
 Goal:
 Prepare the project direction for additional LAN/security observations without expanding the first DNS scope.
@@ -426,3 +1338,54 @@ Scope:
 - Document possible Home Assistant integration
 - Do not implement yet
 - Keep DNS ingestion isolated and stable first
+
+------------------------------------------------------------------------------------------------------------------------
+0.10 Development - Retention & Data Minimization
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Prevent NetAtlas from becoming a raw log archive.
+
+Principle:
+NetAtlas should preserve useful network knowledge, not keep endless raw DNS logs.
+
+Scope:
+- Define retention policy for raw DnsEvent nodes.
+- Keep long-term aggregates.
+- Keep notable/security events longer.
+- Delete low-value raw events.
+- Add dry-run retention command.
+- Add retention telemetry.
+
+Data policy:
+- Raw events are temporary.
+- Aggregates are the primary long-term data.
+- Repeated behaviour may be retained as knowledge.
+- One-off noise may expire.
+- Security-relevant observations may be retained longer.
+
+Non-goal:
+- Do not turn Neo4J into a general log storage system.
+- Do not build user surveillance.
+
+------------------------------------------------------------------------------------------------------------------------
+0.11 Development - Privacy-aware analytics
+------------------------------------------------------------------------------------------------------------------------
+
+Goal:
+Ensure analytics focus on network health, optimization, risk, and attacks.
+
+Scope:
+- Prefer device/network-level analysis over user-level tracking.
+- Avoid storing unnecessary raw query history.
+- Avoid “browsing history” style reports.
+- Focus reports on:
+  - DNS load
+  - resolver health
+  - misconfigured clients
+  - unusual NXDOMAIN
+  - blocked/refused traffic
+  - attack indicators
+  - exposed-service risk
+  - noisy devices
+  - infrastructure optimization

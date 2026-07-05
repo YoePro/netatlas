@@ -9,11 +9,13 @@ type DNSEvent struct {
 
 	ClientIP     string
 	QueryName    string
+	QueryClass   string
 	QueryType    string
 	ResponseCode string
 
-	AnswerIP string
-	Protocol string
+	AnswerIP       string
+	Protocol       string
+	SourceCategory string
 
 	RawLine string
 	RawHash string

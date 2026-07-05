@@ -1,28 +1,48 @@
 package store
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	"dnslog/internal/config"
 	"dnslog/internal/model"
 )
+
+func TestNewNeo4jStoreCarriesDebugFlagInDryRun(t *testing.T) {
+	store, err := NewNeo4jStore(context.Background(), &config.Config{
+		DryRun: true,
+		Debug:  true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.dryRun {
+		t.Fatal("dryRun = false, want true")
+	}
+	if !store.debug {
+		t.Fatal("debug = false, want true")
+	}
+}
 
 func TestEventParamsIncludesGraphProperties(t *testing.T) {
 	timestamp := time.Date(2026, 7, 4, 22, 13, 1, 0, time.UTC)
 	params := eventParams([]model.DNSEvent{
 		{
-			Timestamp:    timestamp,
-			ServerName:   "dns-primary",
-			ServerRole:   "primary",
-			ClientIP:     "192.168.1.10",
-			QueryName:    "example.com",
-			QueryType:    "A",
-			ResponseCode: "NOERROR",
-			AnswerIP:     "93.184.216.34",
-			Protocol:     "udp",
-			RawLine:      "raw",
-			RawHash:      "hash",
+			Timestamp:      timestamp,
+			ServerName:     "dns-primary",
+			ServerRole:     "primary",
+			ClientIP:       "192.168.1.10",
+			QueryName:      "example.com",
+			QueryClass:     "IN",
+			QueryType:      "A",
+			ResponseCode:   "NOERROR",
+			AnswerIP:       "93.184.216.34",
+			Protocol:       "udp",
+			SourceCategory: "queries",
+			RawLine:        "raw",
+			RawHash:        "hash",
 		},
 	})
 
@@ -36,10 +56,12 @@ func TestEventParamsIncludesGraphProperties(t *testing.T) {
 	assertParam(t, event, "serverRole", "primary")
 	assertParam(t, event, "clientIP", "192.168.1.10")
 	assertParam(t, event, "queryName", "example.com")
+	assertParam(t, event, "queryClass", "IN")
 	assertParam(t, event, "queryType", "A")
 	assertParam(t, event, "responseCode", "NOERROR")
 	assertParam(t, event, "answerIP", "93.184.216.34")
 	assertParam(t, event, "protocol", "udp")
+	assertParam(t, event, "sourceCategory", "queries")
 	assertParam(t, event, "rawLine", "raw")
 	assertParam(t, event, "rawHash", "hash")
 }

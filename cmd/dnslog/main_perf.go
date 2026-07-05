@@ -13,6 +13,7 @@ type performanceMetrics struct {
 	Total            time.Duration
 	Lines            uint64
 	Parsed           uint64
+	SkippedGenesis   uint64
 	Written          uint64
 	Batches          uint64
 	BatchSize        int
@@ -68,6 +69,7 @@ func (m *perfMonitor) Stop(runStats *stats, batchSize int) performanceMetrics {
 	total := time.Since(m.start)
 	lines := atomic.LoadUint64(&runStats.lines)
 	parsed := atomic.LoadUint64(&runStats.parsed)
+	skippedGenesis := atomic.LoadUint64(&runStats.skippedGenesis)
 	written := atomic.LoadUint64(&runStats.written)
 	batches := atomic.LoadUint64(&runStats.batchesWritten)
 	cpu := cpuTime() - m.startCPU
@@ -81,6 +83,7 @@ func (m *perfMonitor) Stop(runStats *stats, batchSize int) performanceMetrics {
 		Total:            total,
 		Lines:            lines,
 		Parsed:           parsed,
+		SkippedGenesis:   skippedGenesis,
 		Written:          written,
 		Batches:          batches,
 		BatchSize:        batchSize,
@@ -114,12 +117,67 @@ func (m *perfMonitor) sampleMemory() {
 	}
 }
 
-func printPerformanceBaseline(w io.Writer, metrics performanceMetrics) {
-	fmt.Fprintln(w, "Performance baseline:")
+func printRunSummary(w io.Writer, runStats *stats, dryRun bool, metrics performanceMetrics, telemetryEnabled bool) {
+	if telemetryEnabled {
+		fmt.Fprintf(w, "Done in %s. ", metrics.Total.Round(time.Millisecond))
+	} else {
+		fmt.Fprint(w, "Done. ")
+	}
+
+	fmt.Fprintf(
+		w,
+		"lines=%d parsed=%d ignored=%d notable=%d parse_failures=%d skipped_genesis=%d written=%d batches=%d write_failures=%d dry_run=%t ignored_by_category=%s notable_by_category=%s\n",
+		atomic.LoadUint64(&runStats.lines),
+		atomic.LoadUint64(&runStats.parsed),
+		atomic.LoadUint64(&runStats.ignored),
+		atomic.LoadUint64(&runStats.notable),
+		atomic.LoadUint64(&runStats.parseFailures),
+		atomic.LoadUint64(&runStats.skippedGenesis),
+		atomic.LoadUint64(&runStats.written),
+		atomic.LoadUint64(&runStats.batchesWritten),
+		atomic.LoadUint64(&runStats.writeFailures),
+		dryRun,
+		ignoredCategorySummary(runStats),
+		notableCategorySummary(runStats),
+	)
+
+	if telemetryEnabled {
+		printTelemetry(w, metrics)
+	}
+}
+
+func ignoredCategorySummary(runStats *stats) string {
+	return fmt.Sprintf(
+		"bind_noise:%d,config:%d,filtered:%d,network:%d,notify:%d,rate_limit:%d,resolver:%d,socket:%d,timeout:%d,xfer_in:%d,zoneload:%d",
+		atomic.LoadUint64(&runStats.ignoredBind),
+		atomic.LoadUint64(&runStats.ignoredConfig),
+		atomic.LoadUint64(&runStats.ignoredFiltered),
+		atomic.LoadUint64(&runStats.ignoredNetwork),
+		atomic.LoadUint64(&runStats.ignoredNotify),
+		atomic.LoadUint64(&runStats.ignoredRateLimit),
+		atomic.LoadUint64(&runStats.ignoredResolver),
+		atomic.LoadUint64(&runStats.ignoredSocket),
+		atomic.LoadUint64(&runStats.ignoredTimeout),
+		atomic.LoadUint64(&runStats.ignoredXferIn),
+		atomic.LoadUint64(&runStats.ignoredZoneload),
+	)
+}
+
+func notableCategorySummary(runStats *stats) string {
+	return fmt.Sprintf(
+		"rcode:%d,security_denied_cache:%d",
+		atomic.LoadUint64(&runStats.notableRCode),
+		atomic.LoadUint64(&runStats.notableSecurityDeniedCache),
+	)
+}
+
+func printTelemetry(w io.Writer, metrics performanceMetrics) {
+	fmt.Fprintln(w, "Telemetry:")
 	fmt.Fprintf(w, "  total_time=%s\n", metrics.Total.Round(time.Millisecond))
 	fmt.Fprintf(w, "  parse_throughput=%.2f lines/sec\n", metrics.LinesPerSecond)
 	fmt.Fprintf(w, "  parsed_event_throughput=%.2f events/sec\n", metrics.ParsedPerSecond)
 	fmt.Fprintf(w, "  write_throughput=%.2f events/sec\n", metrics.WrittenPerSecond)
+	fmt.Fprintf(w, "  skipped_by_genesis=%d\n", metrics.SkippedGenesis)
 	fmt.Fprintf(w, "  peak_memory=%s\n", formatBytes(metrics.PeakAllocBytes))
 	fmt.Fprintf(w, "  cpu_time=%s\n", metrics.CPUTime.Round(time.Millisecond))
 	fmt.Fprintf(w, "  cpu_utilization=%.2f%%\n", metrics.CPUUtilization)
