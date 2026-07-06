@@ -1,0 +1,317 @@
+NetAtlas Scout
+
+A local network discovery sensor that observes Layer 2 presence,
+maps IP-to-MAC relationships, detects changes, and reports device
+observations to NetAtlas.
+
+1. Passive ARP observation
+   - Läs ARP-tabellen
+   - Se vilka IP/MAC-par som redan är kända
+   - Upptäck nya enheter utan aktiv scanning
+
+2. Active ARP scan
+   - Skanna ett subnet, t.ex. 192.168.1.0/24
+   - Fråga: "vem har 192.168.1.42?"
+   - Samla IP, MAC och svarstid
+
+3. Device presence
+   - First seen
+   - Last seen
+   - Seen count
+   - Currently active / inactive
+
+4. Change detection
+   - Ny MAC på känd IP
+   - Ny IP på känd MAC
+   - Duplicate IP
+   - Gateway MAC changed
+   - Device disappeared
+   - Device returned
+
+5. Vendor lookup
+   - MAC OUI lookup
+   - Apple, Raspberry Pi, Zebra, Intel, etc.
+
+6. Confidence model
+   - ARP seen = stark lokal bekräftelse
+   - ARP + DHCP hostname = starkare
+   - ARP + DNS activity = ännu starkare
+
+7. Event generation
+   - device_seen
+   - device_new
+   - device_lost
+   - ip_changed
+   - mac_changed
+   - duplicate_ip
+   - gateway_changed
+
+
+=============================================================================================================================================================================================
+ARP-0.1 Concept & Scope
+=============================================================================================================================================================================================
+
+Goal:
+Define the role of the ARP sensor as the local Layer 2 discovery component in NetAtlas.
+
+Scope:
+- Name the sensor
+- Define passive vs active discovery
+- Define ARP observations
+- Define what the sensor should and should not decide
+- Define initial event types
+
+Deliverables:
+- Sensor name
+- Sensor description
+- Observation model draft
+- Event list draft
+
+Status:
+
+Implemented.
+
+Implementation notes:
+- Sensor name is `arpscout`.
+- Observation model is `internal/arpscout.Observation`.
+- Initial event constants are defined for device_seen, device_new, device_lost, ip_changed,
+  mac_changed, duplicate_ip, and gateway_changed.
+- `arpscout info` prints sensor scope and event types as JSON.
+
+
+=============================================================================================================================================================================================
+ARP-0.2 Passive ARP Reader
+=============================================================================================================================================================================================
+
+Goal:
+Read the local ARP/neighbour table and emit basic observations.
+
+Scope:
+- Read Linux neighbour table using `ip neigh`
+- Parse IP, MAC, interface and state
+- Support one or more interfaces
+- Ignore incomplete entries unless configured otherwise
+- Emit normalized ARP observations
+
+Deliverables:
+- CLI command
+- Parser
+- Basic observation output as JSON
+- Unit tests with sample `ip neigh` output
+
+Status:
+
+Implemented.
+
+Implementation notes:
+- Added `arpscout passive`.
+- Reads Linux neighbour table using `ip neigh show`.
+- Supports `-iface` for one or more interfaces.
+- Ignores INCOMPLETE entries by default and supports `-include-incomplete`.
+- Emits normalized observations as JSON.
+- Parser tests cover IPv4, IPv6, interface filtering, and incomplete entries.
+
+
+=============================================================================================================================================================================================
+ARP-0.3 Sensor Identity
+=============================================================================================================================================================================================
+
+Goal:
+Give NetAtlas Scout a stable identity so NetAtlas Core can distinguish observations from different sensors, hosts, interfaces, and sites.
+
+Scope:
+- Sensor ID
+- Sensor display name
+- Sensor version
+- Hostname
+- Site name / location label
+- Interface list
+- Capability list
+- JSON identity output
+
+Deliverables:
+- `arpscout identity`
+- Stable generated sensor ID
+- Configurable display name and site
+- Capability list including passive_arp
+- Unit tests
+
+Status:
+
+Implemented.
+
+Implementation notes:
+- Added `arpscout identity`.
+- Reads `[arpscout]` from NetAtlas INI config.
+- Supports configurable sensor_id, display_name, site, and interfaces.
+- Generates a stable sensor ID when sensor_id is empty.
+- Identity output includes version, hostname, interfaces, and capabilities including passive_arp.
+
+
+=============================================================================================================================================================================================
+ARP-0.4 Active ARP Scan
+=============================================================================================================================================================================================
+
+Goal:
+Actively discover devices on a configured subnet.
+
+Scope:
+- Configure subnet CIDR
+- Send ARP requests
+- Collect replies
+- Rate limit scan
+- Avoid aggressive behaviour
+- Mark source as active_scan
+- Require explicit subnet input
+- Support dry-run scan planning
+
+Deliverables:
+- `arpscout scan`
+- CIDR parser
+- Active scan result output as JSON
+- Scan safety limits
+- Unit tests
+
+
+=============================================================================================================================================================================================
+ARP-0.5 Vendor Identification
+=============================================================================================================================================================================================
+
+Goal:
+Identify device manufacturers using MAC OUI data.
+
+Scope:
+- Local OUI lookup table
+- Vendor lookup by MAC prefix
+- Unknown vendor handling
+- Vendor field on observations
+- Updateable vendor database later
+
+Deliverables:
+- OUI lookup module
+- Vendor-enriched observations
+- Tests for known and unknown prefixes
+
+
+=============================================================================================================================================================================================
+ARP-0.6 Change Detection
+=============================================================================================================================================================================================
+
+Goal:
+Detect meaningful changes between observation batches without turning the sensor into the system of record.
+
+Scope:
+- Compare current batch with previous in-memory state
+- New device seen in current run
+- Device missing from current run
+- MAC changed for IP
+- IP changed for MAC
+- Duplicate IP in current batch
+- Gateway MAC changed
+- Emit events as observations, not final truth
+
+Deliverables:
+- Event generator
+- Event constants
+- Human-readable event output
+- JSON event output
+- Unit tests
+
+
+=============================================================================================================================================================================================
+ARP-0.7 Sensor Daemon
+=============================================================================================================================================================================================
+
+Goal:
+Run NetAtlas Scout continuously.
+
+Scope:
+- Periodic passive reads
+- Optional periodic active scans
+- Config file
+- Logging
+- Graceful shutdown
+- Runtime status
+- No local database
+
+Deliverables:
+- `arpscout daemon`
+- Config file example
+- Systemd unit draft
+- Log output
+- Runtime status output
+
+
+=============================================================================================================================================================================================
+ARP-0.8 Observation Transport
+=============================================================================================================================================================================================
+
+Goal:
+Send ARP observations and sensor events to NetAtlas Core.
+
+Scope:
+- HTTP API client
+- Sensor registration / heartbeat
+- Batch upload
+- Authentication token
+- Retry on failure
+- Dry-run output path
+- Simple file-based offline spool if Core is unavailable
+
+Deliverables:
+- API client
+- Observation uploader
+- Heartbeat sender
+- File-based spool
+- Integration tests
+
+
+=============================================================================================================================================================================================
+ARP-0.9 Hardening & Operational Safety
+=============================================================================================================================================================================================
+
+Goal:
+Make NetAtlas Scout safe and predictable to run on real networks.
+
+Scope:
+- Conservative scan defaults
+- Rate limits
+- Timeout handling
+- Permission checks
+- Interface validation
+- Clear error messages
+- Config validation
+- Safe behaviour when Core is unavailable
+
+Deliverables:
+- Safety defaults
+- Config validator
+- Permission diagnostics
+- Error handling tests
+- Operational notes
+
+
+=============================================================================================================================================================================================
+ARP-1.0 Stable ARP Sensor
+=============================================================================================================================================================================================
+
+Goal:
+Deliver a stable first version of NetAtlas Scout.
+
+Scope:
+- Passive ARP discovery
+- Sensor identity
+- Active ARP scan
+- Vendor lookup
+- Change detection
+- Daemon mode
+- Observation transport
+- Safe retry/spool behaviour
+- Documentation
+
+Deliverables:
+- Documented CLI
+- Config example
+- Systemd example
+- Test coverage
+- README

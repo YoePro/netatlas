@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NetAtlas — Sign In</title>
+  <link rel="stylesheet" href="/static/css/base.css">
+  <style>
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: var(--bg-base);
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Background network canvas */
+    #bg-canvas {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .login-wrap {
+      position: relative;
+      z-index: 1;
+      width: 360px;
+    }
+
+    .login-logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+    .login-logo-mark {
+      width: 36px;
+      height: 36px;
+    }
+    .login-logo-text {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -.01em;
+    }
+    .login-logo-sub {
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--text-muted);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .login-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 28px;
+    }
+
+    .login-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+    .login-subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 24px;
+    }
+
+    .login-form {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-label { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+
+    .form-input {
+      height: 38px;
+      padding: 0 12px;
+      border-radius: 5px;
+      border: 1px solid var(--border);
+      background: var(--bg-surface-2);
+      color: var(--text-primary);
+      font-size: 14px;
+      font-family: var(--font);
+      outline: none;
+      width: 100%;
+      transition: border-color 100ms ease;
+    }
+    .form-input:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(59,130,246,.12);
+    }
+    .form-input::placeholder { color: var(--text-muted); }
+
+    .login-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .form-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+    .form-checkbox input { accent-color: var(--blue); }
+
+    .login-btn {
+      width: 100%;
+      height: 40px;
+      background: var(--blue);
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      font-size: 14px;
+      font-weight: 500;
+      font-family: var(--font);
+      cursor: pointer;
+      transition: background 100ms ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .login-btn:hover { background: #1D55D8; }
+    .login-btn:active { background: #1744B8; }
+    .login-btn:disabled {
+      opacity: .6;
+      cursor: not-allowed;
+    }
+
+    .login-error {
+      display: none;
+      background: var(--red-bg);
+      border: 1px solid var(--red-border);
+      border-radius: 5px;
+      padding: 10px 12px;
+      font-size: 13px;
+      color: var(--red);
+    }
+    .login-error.visible { display: block; }
+
+    .login-footer {
+      margin-top: 20px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .theme-toggle-login {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg-surface);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-secondary);
+      z-index: 10;
+      transition: background 100ms;
+    }
+    .theme-toggle-login:hover {
+      background: var(--bg-surface-2);
+      color: var(--text-primary);
+    }
+    .theme-toggle-login svg { width: 16px; height: 16px; }
+  </style>
+</head>
+<body>
+  <canvas id="bg-canvas"></canvas>
+
+  <button class="theme-toggle-login" id="theme-toggle" title="Toggle theme">
+    <svg id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+      <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+    </svg>
+    <svg id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+    </svg>
+  </button>
+
+  <div class="login-wrap">
+    <div class="login-logo">
+      <svg class="login-logo-mark" viewBox="0 0 36 36" fill="none">
+        <rect width="36" height="36" rx="8" fill="var(--blue)"/>
+        <circle cx="18" cy="18" r="4" fill="white"/>
+        <circle cx="8"  cy="10" r="2.5" fill="white" opacity=".7"/>
+        <circle cx="28" cy="10" r="2.5" fill="white" opacity=".7"/>
+        <circle cx="8"  cy="26" r="2.5" fill="white" opacity=".7"/>
+        <circle cx="28" cy="26" r="2.5" fill="white" opacity=".7"/>
+        <line x1="18" y1="18" x2="8"  y2="10" stroke="white" stroke-width="1.2" opacity=".5"/>
+        <line x1="18" y1="18" x2="28" y2="10" stroke="white" stroke-width="1.2" opacity=".5"/>
+        <line x1="18" y1="18" x2="8"  y2="26" stroke="white" stroke-width="1.2" opacity=".5"/>
+        <line x1="18" y1="18" x2="28" y2="26" stroke="white" stroke-width="1.2" opacity=".5"/>
+      </svg>
+      <div>
+        <div class="login-logo-text">NetAtlas</div>
+        <div class="login-logo-sub">Network Intelligence</div>
+      </div>
+    </div>
+
+    <div class="login-card">
+      <div class="login-title">Sign in</div>
+      <div class="login-subtitle">Enter your credentials to access the platform</div>
+
+      <div id="login-error" class="login-error">
+        Invalid username or password. Please try again.
+      </div>
+
+      <form class="login-form" id="login-form" autocomplete="on">
+        <div class="form-group">
+          <label class="form-label" for="username">Username</label>
+          <input class="form-input" type="text" id="username" name="username"
+                 placeholder="admin" autocomplete="username" autofocus>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="password">Password</label>
+          <input class="form-input" type="password" id="password" name="password"
+                 placeholder="••••••••" autocomplete="current-password">
+        </div>
+
+        <div class="login-row">
+          <label class="form-checkbox">
+            <input type="checkbox" id="remember" name="remember">
+            Remember me
+          </label>
+          <a href="#" style="font-size:13px;color:var(--blue)">Forgot password?</a>
+        </div>
+
+        <button class="login-btn" type="submit" id="login-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+            <polyline points="10 17 15 12 10 7"/>
+            <line x1="15" y1="12" x2="3" y2="12"/>
+          </svg>
+          Sign in
+        </button>
+      </form>
+    </div>
+
+    <div class="login-footer">
+      NetAtlas &mdash; Network Intelligence Platform
+    </div>
+  </div>
+
+  <script>
+    // Theme
+    const stored = localStorage.getItem('na-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', stored);
+    const sunIcon  = document.getElementById('icon-sun');
+    const moonIcon = document.getElementById('icon-moon');
+    function syncIcons(theme) {
+      if (theme === 'dark') {
+        sunIcon.style.display  = 'block';
+        moonIcon.style.display = 'none';
+      } else {
+        sunIcon.style.display  = 'none';
+        moonIcon.style.display = 'block';
+      }
+    }
+    syncIcons(stored);
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+      const cur = document.documentElement.getAttribute('data-theme');
+      const next = cur === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('na-theme', next);
+      syncIcons(next);
+    });
+
+    // Background network animation
+    (function() {
+      const canvas = document.getElementById('bg-canvas');
+      const ctx = canvas.getContext('2d');
+      let W, H, nodes;
+      const NODE_COUNT = 40;
+      const CONNECT_DIST = 160;
+
+      function resize() {
+        W = canvas.width  = window.innerWidth;
+        H = canvas.height = window.innerHeight;
+      }
+
+      function init() {
+        resize();
+        nodes = Array.from({length: NODE_COUNT}, () => ({
+          x: Math.random() * W,
+          y: Math.random() * H,
+          vx: (Math.random() - .5) * .4,
+          vy: (Math.random() - .5) * .4,
+          r: Math.random() * 1.5 + 1
+        }));
+      }
+
+      function getColor(alpha) {
+        const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        return dark
+          ? `rgba(59,130,246,${alpha})`
+          : `rgba(37,99,235,${alpha})`;
+      }
+
+      function draw() {
+        ctx.clearRect(0, 0, W, H);
+        // Move
+        nodes.forEach(n => {
+          n.x += n.vx; n.y += n.vy;
+          if (n.x < 0 || n.x > W) n.vx *= -1;
+          if (n.y < 0 || n.y > H) n.vy *= -1;
+        });
+        // Edges
+        for (let i = 0; i < nodes.length; i++) {
+          for (let j = i + 1; j < nodes.length; j++) {
+            const dx = nodes[i].x - nodes[j].x;
+            const dy = nodes[i].y - nodes[j].y;
+            const d  = Math.sqrt(dx*dx + dy*dy);
+            if (d < CONNECT_DIST) {
+              ctx.beginPath();
+              ctx.moveTo(nodes[i].x, nodes[i].y);
+              ctx.lineTo(nodes[j].x, nodes[j].y);
+              ctx.strokeStyle = getColor((1 - d / CONNECT_DIST) * .18);
+              ctx.lineWidth = .8;
+              ctx.stroke();
+            }
+          }
+        }
+        // Nodes
+        nodes.forEach(n => {
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+          ctx.fillStyle = getColor(.35);
+          ctx.fill();
+        });
+        requestAnimationFrame(draw);
+      }
+
+      init();
+      draw();
+      window.addEventListener('resize', resize);
+    })();
+
+    // Login form
+    document.getElementById('login-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const btn = document.getElementById('login-btn');
+      const err = document.getElementById('login-error');
+      err.classList.remove('visible');
+      btn.disabled = true;
+      btn.textContent = 'Signing in…';
+
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({username, password})
+        });
+        if (res.ok) {
+          window.location.href = '/html/index.html';
+        } else {
+          err.classList.add('visible');
+          btn.disabled = false;
+          btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> Sign in`;
+        }
+      } catch(_) {
+        // Dev: allow bypass
+        window.location.href = '/html/index.html';
+      }
+    });
+  </script>
+</body>
+</html>

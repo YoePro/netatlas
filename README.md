@@ -76,3 +76,14 @@ Before pushing changes:
 go test ./...
 go build -o bin/dnslog ./cmd/dnslog
 ```
+
+## UI Server
+
+Build and run the NetAtlas UI:
+
+```bash
+go build -o bin/netatlas ./cmd/netatlas
+./bin/netatlas -config config.ini
+```
+
+The UI listens according to `[ui]` in the config file. The example config uses `0.0.0.0:8080`.

@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NetAtlas — Dashboard</title>
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+</head>
+<body>
+<div class="app-shell">
+
+  <!-- Navigation -->
+  <nav class="nav" id="main-nav"></nav>
+
+  <!-- Top Bar -->
+  <header class="topbar">
+    <div class="topbar-breadcrumb">
+      <span class="topbar-breadcrumb-current">Dashboard</span>
+    </div>
+
+    <div class="topbar-search">
+      <svg class="topbar-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <input type="text" placeholder="Search hosts, domains, IPs…" id="global-search">
+    </div>
+
+    <div class="topbar-sensor-select" id="sensor-selector">
+      <div class="topbar-sensor-dot"></div>
+      <span>All sensors</span>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="6 9 12 15 18 9"/>
+      </svg>
+    </div>
+
+    <div class="topbar-sep"></div>
+
+    <button class="topbar-icon-btn" title="Alerts" onclick="window.location='#alerts'">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+        <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+      </svg>
+      <span class="badge">3</span>
+    </button>
+
+    <button class="topbar-icon-btn" id="theme-toggle-btn" title="Toggle theme">
+      <svg class="icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="5"/>
+        <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+        <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+      </svg>
+      <svg class="icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+      </svg>
+    </button>
+  </header>
+
+  <!-- Main Content -->
+  <main class="content">
+    <div class="content-inner">
+
+      <!-- KPI Row -->
+      <div class="grid-4" style="margin-bottom:16px;" id="kpi-row">
+        <div class="stat-card blue">
+          <div class="stat-card-label">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/>
+            </svg>
+            Active Sensors
+          </div>
+          <div class="stat-card-value" id="kpi-sensors">—</div>
+          <div class="stat-card-delta same" id="kpi-sensors-sub">of 5 total</div>
+        </div>
+
+        <div class="stat-card green">
+          <div class="stat-card-label">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+            DNS Requests
+          </div>
+          <div class="stat-card-value" id="kpi-dns">—</div>
+          <div class="stat-card-delta" id="kpi-dns-delta">—</div>
+        </div>
+
+        <div class="stat-card amber">
+          <div class="stat-card-label">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+              <line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+            New Devices
+          </div>
+          <div class="stat-card-value" id="kpi-devices">—</div>
+          <div class="stat-card-delta" id="kpi-devices-delta">—</div>
+        </div>
+
+        <div class="stat-card red">
+          <div class="stat-card-label">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            Active Alerts
+          </div>
+          <div class="stat-card-value" id="kpi-alerts">—</div>
+          <div class="stat-card-delta" id="kpi-alerts-delta">—</div>
+        </div>
+      </div>
+
+      <!-- Timeline + Sensor Status -->
+      <div class="grid-3-1" style="margin-bottom:16px;">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+              </svg>
+              DNS Request Timeline — Last 60 minutes
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-secondary btn-sm">1h</button>
+              <button class="btn btn-ghost btn-sm">6h</button>
+              <button class="btn btn-ghost btn-sm">24h</button>
+            </div>
+          </div>
+          <div class="card-body" style="padding:12px 16px 16px;">
+            <canvas id="timeline-chart" style="width:100%;height:120px;display:block;"></canvas>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Sensor Status</div>
+            <a href="/html/sensors.html" class="btn btn-ghost btn-sm">View all</a>
+          </div>
+          <div id="sensor-status-list" class="card-body-flush"></div>
+        </div>
+      </div>
+
+      <!-- Top Talkers + Recent Domains + Alerts -->
+      <div class="grid-3" style="margin-bottom:16px;">
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
+                <polyline points="17 6 23 6 23 12"/>
+              </svg>
+              Top Talkers
+            </div>
+            <button class="btn btn-ghost btn-sm">1 hr</button>
+          </div>
+          <div class="card-body-flush">
+            <table class="data-table" id="top-talkers-table">
+              <thead>
+                <tr>
+                  <th>Host</th>
+                  <th>Queries</th>
+                  <th style="width:100px">Rate</th>
+                </tr>
+              </thead>
+              <tbody id="top-talkers-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+              </svg>
+              New Domains
+            </div>
+            <button class="btn btn-ghost btn-sm">Clear</button>
+          </div>
+          <div class="activity-list" id="new-domains-list"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+              Active Alerts
+            </div>
+            <span class="badge badge-red">3</span>
+          </div>
+          <div class="activity-list" id="alerts-list">
+            <div class="activity-item">
+              <div class="activity-dot-col">
+                <div class="activity-dot" style="background:var(--red)"></div>
+                <div class="activity-line"></div>
+              </div>
+              <div class="activity-body">
+                <div class="activity-title">Unusual DNS volume — iot-cam01</div>
+                <div class="activity-meta">
+                  <span class="badge badge-red" style="font-size:10px">critical</span>
+                  <span>2 min ago</span>
+                </div>
+              </div>
+            </div>
+            <div class="activity-item">
+              <div class="activity-dot-col">
+                <div class="activity-dot" style="background:var(--amber)"></div>
+                <div class="activity-line"></div>
+              </div>
+              <div class="activity-body">
+                <div class="activity-title">Sensor dhcp-monitor-01 high latency</div>
+                <div class="activity-meta">
+                  <span class="badge badge-amber" style="font-size:10px">warning</span>
+                  <span>8 min ago</span>
+                </div>
+              </div>
+            </div>
+            <div class="activity-item">
+              <div class="activity-dot-col">
+                <div class="activity-dot" style="background:var(--amber)"></div>
+              </div>
+              <div class="activity-body">
+                <div class="activity-title">New domain category: advertising</div>
+                <div class="activity-meta">
+                  <span class="badge badge-amber" style="font-size:10px">warning</span>
+                  <span>22 min ago</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Latest Discoveries -->
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-header">
+          <div class="card-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            Latest Discoveries
+          </div>
+          <div class="card-actions">
+            <button class="btn btn-ghost btn-sm">Devices</button>
+            <button class="btn btn-secondary btn-sm">Domains</button>
+            <button class="btn btn-ghost btn-sm">Services</button>
+          </div>
+        </div>
+        <div class="card-body-flush">
+          <table class="data-table" id="discoveries-table">
+            <thead>
+              <tr>
+                <th>Domain / Host</th>
+                <th>Type</th>
+                <th>First Seen</th>
+                <th>Clients</th>
+                <th>Category</th>
+                <th>Source</th>
+              </tr>
+            </thead>
+            <tbody id="discoveries-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- /content-inner -->
+  </main>
+
+  <!-- Status Bar -->
+  <footer class="statusbar">
+    <div class="statusbar-item">
+      <div class="statusbar-item-dot green"></div>
+      <span id="sb-sensors">4 sensors online</span>
+    </div>
+    <div class="statusbar-sep">|</div>
+    <div class="statusbar-item">
+      <span id="sb-events">241,040 events today</span>
+    </div>
+    <div class="statusbar-sep">|</div>
+    <div class="statusbar-item">
+      <div class="statusbar-item-dot amber"></div>
+      <span>3 alerts</span>
+    </div>
+    <div class="statusbar-time" id="statusbar-time"></div>
+  </footer>
+
+</div><!-- /app-shell -->
+
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/nav.js"></script>
+<script src="/static/js/dashboard.js"></script>
+</body>
+</html>

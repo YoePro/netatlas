@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NetAtlas — Sensor</title>
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+</head>
+<body>
+<div class="app-shell">
+
+  <nav class="nav" id="main-nav"></nav>
+
+  <header class="topbar">
+    <div class="topbar-breadcrumb">
+      <a href="/html/sensors.html" style="color:var(--text-secondary);text-decoration:none;">Sensors</a>
+      <span class="topbar-breadcrumb-sep">/</span>
+      <span class="topbar-breadcrumb-current" id="breadcrumb-name">Loading…</span>
+    </div>
+
+    <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+      <span class="badge" id="sensor-status-badge" style="font-size:12px;">—</span>
+      <div class="topbar-sep"></div>
+      <button class="topbar-icon-btn" id="theme-toggle-btn" title="Toggle theme">
+        <svg class="icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="5"/>
+          <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+          <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+        <svg class="icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="content">
+    <div class="content-inner" id="sensor-content" style="display:none">
+
+      <!-- Page header -->
+      <div class="page-header">
+        <div>
+          <div class="page-title" id="sensor-name">—</div>
+          <div class="page-subtitle" id="sensor-meta">—</div>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-secondary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+            Configure
+          </button>
+          <button class="btn btn-ghost">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/>
+              <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
+            </svg>
+            Restart
+          </button>
+        </div>
+      </div>
+
+      <!-- Identity + Health row -->
+      <div class="grid-4" style="margin-bottom:16px;">
+        <div class="stat-card blue">
+          <div class="stat-card-label">Events Today</div>
+          <div class="stat-card-value" id="s-events">—</div>
+          <div class="stat-card-delta same">All time: <span id="s-events-all">—</span></div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-card-label">Latency</div>
+          <div class="stat-card-value" id="s-latency">—</div>
+          <div class="stat-card-delta same">avg last 1h</div>
+        </div>
+        <div class="stat-card" id="s-uptime-card">
+          <div class="stat-card-label">Uptime</div>
+          <div class="stat-card-value" id="s-uptime">—</div>
+          <div class="stat-card-delta same">last 30 days</div>
+        </div>
+        <div class="stat-card" id="s-status-card">
+          <div class="stat-card-label">Health</div>
+          <div class="stat-card-value" id="s-health">—</div>
+          <div class="stat-card-delta same" id="s-last-seen">—</div>
+        </div>
+      </div>
+
+      <!-- Main content grid -->
+      <div class="grid-2" style="margin-bottom:16px;">
+
+        <!-- Timeline -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">Event Timeline</div>
+            <div class="card-actions">
+              <button class="btn btn-secondary btn-sm">1h</button>
+              <button class="btn btn-ghost btn-sm">6h</button>
+              <button class="btn btn-ghost btn-sm">24h</button>
+            </div>
+          </div>
+          <div class="card-body" style="padding:12px 16px 16px;">
+            <canvas id="sensor-timeline" style="width:100%;height:100px;display:block;"></canvas>
+          </div>
+        </div>
+
+        <!-- System health -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">System Health</div>
+            <span class="t-xs text-muted" id="health-updated">Updated just now</span>
+          </div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
+            <div class="health-row">
+              <span class="health-row-label">CPU</span>
+              <div class="health-row-bar">
+                <div class="progress-bar"><div class="progress-fill" id="cpu-bar" style="width:0%"></div></div>
+              </div>
+              <span class="health-row-value" id="cpu-val">—</span>
+            </div>
+            <div class="health-row">
+              <span class="health-row-label">Memory</span>
+              <div class="health-row-bar">
+                <div class="progress-bar"><div class="progress-fill" id="mem-bar" style="width:0%"></div></div>
+              </div>
+              <span class="health-row-value" id="mem-val">—</span>
+            </div>
+            <div class="health-row">
+              <span class="health-row-label">Disk</span>
+              <div class="health-row-bar">
+                <div class="progress-bar"><div class="progress-fill" id="disk-bar" style="width:0%"></div></div>
+              </div>
+              <span class="health-row-value" id="disk-val">—</span>
+            </div>
+            <div class="divider" style="margin:0"></div>
+            <div class="health-row">
+              <span class="health-row-label">Sources</span>
+              <div id="sources-wrap" style="display:flex;flex-wrap:wrap;gap:5px;"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Configuration + Errors row -->
+      <div class="grid-2" style="margin-bottom:16px;">
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+              Configuration
+            </div>
+          </div>
+          <div class="card-body">
+            <table style="width:100%;font-size:13px;border-collapse:collapse;" id="config-table">
+              <tbody id="config-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+              Recent Events / Errors
+            </div>
+          </div>
+          <div class="activity-list" id="errors-list"></div>
+        </div>
+
+      </div>
+
+      <!-- Top domains -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Top Queried Domains</div>
+          <a href="/html/map.html" class="btn btn-ghost btn-sm">View on map</a>
+        </div>
+        <div class="card-body-flush">
+          <table class="data-table" id="domains-table">
+            <thead>
+              <tr>
+                <th>Domain</th>
+                <th>Queries</th>
+                <th style="width:200px">Share</th>
+                <th>% of total</th>
+              </tr>
+            </thead>
+            <tbody id="domains-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- /sensor-content -->
+  </main>
+
+  <footer class="statusbar">
+    <div class="statusbar-item">
+      <div class="statusbar-item-dot" id="sb-dot" style="background:var(--text-muted)"></div>
+      <span id="sb-sensor-name">Loading…</span>
+    </div>
+    <div class="statusbar-sep">|</div>
+    <div class="statusbar-item" id="sb-events-stat"></div>
+    <div class="statusbar-time" id="statusbar-time"></div>
+  </footer>
+
+</div>
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/nav.js"></script>
+<script src="/static/js/sensor.js"></script>
+</body>
+</html>
