@@ -3,36 +3,38 @@
   const BASE = '';
   const TIMEOUT_MS = 4000;
 
-  async function get(path) {
+  async function withTimeout(work) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
     try {
-      const res = await fetch(BASE + path, {
-        headers: {'Accept': 'application/json'},
-        signal: ctrl.signal
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
+      return await work(ctrl.signal);
     } finally {
       clearTimeout(timer);
     }
   }
 
+  async function get(path) {
+    return withTimeout(async signal => {
+      const res = await fetch(BASE + path, {
+        headers: {'Accept': 'application/json'},
+        signal
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    });
+  }
+
   async function post(path, body) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-    try {
+    return withTimeout(async signal => {
       const res = await fetch(BASE + path, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(body),
-        signal: ctrl.signal
+        signal
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
-    } finally {
-      clearTimeout(timer);
-    }
+    });
   }
 
   // Mock data used when the real API is unavailable
@@ -126,8 +128,8 @@
   }
 
   async function getGraph() {
-    try { return await get('/api/graph'); }
-    catch(_) { return MOCK['/api/graph']; }
+    try { return normalizeGraph(await get('/api/graph')); }
+    catch(_) { return normalizeGraph(MOCK['/api/graph']); }
   }
 
   async function getStats() {
@@ -141,35 +143,72 @@
   }
 
   async function getSensor(id) {
-    try { return await get(`/api/sensors/${id}`); }
+    try { return await get(`/api/sensors/${encodeURIComponent(id)}`); }
     catch(_) {
-      const s = MOCK['/api/sensors'].find(x => x.id === id) || MOCK['/api/sensors'][0];
+      let s;
+      try {
+        const sensors = await getSensors();
+        s = sensors.find(x => x.id === id);
+      } catch (_) {}
+      s = s || MOCK['/api/sensors'].find(x => x.id === id) || MOCK['/api/sensors'][0];
       return {
         ...s,
-        cpu: 34, memory: 61, disk: 42,
+        cpu: s.cpu ?? 0, memory: s.memory ?? 0, disk: s.disk ?? 0,
         config: {
-          interface: 'eth0',
-          port: 53,
-          capture_mode: 'passive',
-          buffer_size: '512MB',
-          retention: '30d'
+          sensor_id: s.id,
+          source: (s.sources || []).join(', '),
+          location: s.location || '',
+          version: s.version || ''
         },
-        recentErrors: [
-          {time:'10:42:03', level:'warn', msg:'Buffer utilization above 75%'},
-          {time:'09:18:51', level:'info', msg:'Configuration reloaded'},
-          {time:'08:03:22', level:'warn', msg:'Upstream timeout from 8.8.8.8'},
-        ],
-        topDomains: [
-          {domain:'github.com',      queries:4210, pct:12.1},
-          {domain:'microsoft.com',   queries:3802, pct:10.9},
-          {domain:'cloudfront.net',  queries:2901, pct:8.3},
-          {domain:'api.example.org', queries:1840, pct:5.3},
-          {domain:'ads.tracker.io',  queries:950,  pct:2.7},
-        ],
+        recentErrors: [],
+        topDomains: [],
         timeline: generateTimeline()
       };
     }
   }
 
-  window.NAAPI = {get, post, getGraph, getStats, getSensors, getSensor, MOCK};
+  async function getClient(ip) {
+    return get(`/api/clients/${encodeURIComponent(ip)}`);
+  }
+
+  async function updateClient(ip, data) {
+    return post(`/api/clients/${encodeURIComponent(ip)}`, data);
+  }
+
+  function normalizeGraph(data) {
+    const graph = data && typeof data === 'object' ? data : {};
+    const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+    const edges = Array.isArray(graph.edges) ? graph.edges : [];
+    const nodeIds = new Set();
+    const normalizedNodes = [];
+    nodes.forEach((node, index) => {
+      if (!node || typeof node !== 'object') return;
+      const id = String(node.id || `node-${index}`);
+      if (nodeIds.has(id)) return;
+      nodeIds.add(id);
+      normalizedNodes.push({
+        ...node,
+        id,
+        type: node.type || 'client',
+        label: node.label || node.ip || id
+      });
+    });
+    const normalizedEdges = [];
+    edges.forEach(edge => {
+      if (!edge || typeof edge !== 'object') return;
+      const source = String(edge.source || '');
+      const target = String(edge.target || '');
+      if (!nodeIds.has(source) || !nodeIds.has(target)) return;
+      normalizedEdges.push({
+        ...edge,
+        source,
+        target,
+        type: edge.type || 'link',
+        count: Number(edge.count || 1)
+      });
+    });
+    return {nodes: normalizedNodes, edges: normalizedEdges};
+  }
+
+  window.NAAPI = {get, post, getGraph, getStats, getSensors, getSensor, getClient, updateClient, MOCK};
 })();

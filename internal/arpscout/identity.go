@@ -12,7 +12,7 @@ import (
 	"gopkg.in/ini.v1"
 )
 
-const Version = "0.3"
+const Version = "1.0"
 
 type IdentityConfig struct {
 	SensorID    string
@@ -86,9 +86,17 @@ func BuildIdentity(cfg IdentityConfig) (Identity, error) {
 		Interfaces:  interfaces,
 		Capabilities: []string{
 			"passive_arp",
+			"active_arp",
+			"change_detection",
+			"daemon_mode",
+			"mac_network_classification",
+			"operational_safety_checks",
+			"vendor_oui_lookup",
 			"ip_neigh_reader",
 			"json_identity",
 			"json_observations",
+			"observation_transport",
+			"stable_arp_sensor",
 		},
 	}, nil
 }

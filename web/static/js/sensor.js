@@ -17,6 +17,7 @@
   function drawTimeline(data) {
     const canvas = document.getElementById('sensor-timeline');
     if (!canvas) return;
+    data = Array.isArray(data) && data.length ? data : [{t: Date.now(), queries: 0, alerts: 0}];
     const dpr   = window.devicePixelRatio || 1;
     const W     = canvas.parentElement.clientWidth;
     const H     = 100;
@@ -91,21 +92,27 @@
   }
 
   function renderSensor(s) {
+    const isARP = s.type === 'arp' || (s.sources || []).includes('ARP');
+    const itemName = isARP ? 'observations' : 'events';
+
     document.getElementById('sensor-content').style.display = '';
     document.title = `NetAtlas — ${s.name}`;
     document.getElementById('breadcrumb-name').textContent = s.name;
     document.getElementById('sensor-name').textContent = s.name;
     document.getElementById('sensor-meta').textContent =
-      `${s.location} · v${s.version} · ${s.sources.join(', ')}`;
+      `${s.location || '—'} · v${s.version || '—'} · ${(s.sources || []).join(', ')}`;
 
     const statusClass = s.status === 'online' ? 'badge-green' : s.status === 'warning' ? 'badge-amber' : 'badge-red';
     document.getElementById('sensor-status-badge').className = `badge ${statusClass}`;
     document.getElementById('sensor-status-badge').textContent = s.status;
 
     // KPIs
+    const eventsLabel = document.querySelector('#s-events')?.closest('.stat-card')?.querySelector('.stat-card-label');
+    if (eventsLabel) eventsLabel.textContent = isARP ? 'ARP Observations' : 'Events Today';
     document.getElementById('s-events').textContent   = fmt(s.events);
-    document.getElementById('s-events-all').textContent = fmt(s.events * 30);
+    document.getElementById('s-events-all').textContent = fmt(isARP ? s.events : s.events * 30);
     document.getElementById('s-latency').textContent  = s.latency != null ? `${s.latency} ms` : '—';
+    s.uptime = Number(s.uptime || 0);
     document.getElementById('s-uptime').textContent   = `${s.uptime}%`;
 
     const uptimeCard = document.getElementById('s-uptime-card');
@@ -117,6 +124,9 @@
     statusCard.className = 'stat-card ' + (s.status === 'online' ? 'green' : s.status === 'warning' ? 'amber' : 'red');
 
     // System health
+    s.cpu = Number(s.cpu || 0);
+    s.memory = Number(s.memory || 0);
+    s.disk = Number(s.disk || 0);
     const cpuCol  = healthColor(s.cpu);
     const memCol  = healthColor(s.memory);
     const diskCol = healthColor(s.disk);
@@ -131,7 +141,7 @@
     document.getElementById('disk-val').textContent  = s.disk + '%';
 
     document.getElementById('sources-wrap').innerHTML =
-      s.sources.map(src => `<span class="tag">${src}</span>`).join('');
+      (s.sources || []).map(src => `<span class="tag">${src}</span>`).join('');
 
     // Config
     const cfgRows = Object.entries(s.config || {}).map(([k, v]) =>
@@ -162,10 +172,27 @@
         </div>`;
       }).join('');
 
-    // Top domains table
-    const maxQ = (s.topDomains && s.topDomains[0]) ? s.topDomains[0].queries : 1;
+    // Top DNS domains or ARP devices.
+    const topTitle = document.querySelector('#domains-table')?.closest('.card')?.querySelector('.card-title');
+    if (topTitle) topTitle.textContent = isARP ? 'Top ARP Devices' : 'Top Queried Domains';
+    const headerRow = document.querySelector('#domains-table thead tr');
+    if (headerRow) {
+      headerRow.innerHTML = isARP
+        ? '<th>Device</th><th>Observations</th><th>MAC</th><th>Vendor</th>'
+        : '<th>Domain</th><th>Queries</th><th style="width:200px">Share</th><th>% of total</th>';
+    }
+    const topItems = s.topDomains || [];
+    const maxQ = topItems[0] ? topItems[0].queries : 1;
     document.getElementById('domains-tbody').innerHTML =
-      (s.topDomains || []).map(d => {
+      topItems.map(d => {
+        if (isARP) {
+          return `<tr class="clickable">
+            <td style="font-weight:500">${d.label || d.ip || d.domain || '—'}</td>
+            <td style="font-variant-numeric:tabular-nums">${Number(d.queries || 0).toLocaleString()}</td>
+            <td class="mono">${d.mac || '—'}</td>
+            <td class="muted">${d.vendor || '—'}</td>
+          </tr>`;
+        }
         const pct = Math.round((d.queries / maxQ) * 100);
         return `<tr class="clickable">
           <td style="font-weight:500">${d.domain}</td>
@@ -182,7 +209,7 @@
     const dotEl = document.getElementById('sb-dot');
     dotEl.style.background = s.status === 'online' ? 'var(--green)' : s.status === 'warning' ? 'var(--amber)' : 'var(--red)';
     document.getElementById('sb-sensor-name').textContent = s.name;
-    document.getElementById('sb-events-stat').textContent = `${fmt(s.events)} events`;
+    document.getElementById('sb-events-stat').textContent = `${fmt(s.events)} ${itemName}`;
   }
 
   async function load() {

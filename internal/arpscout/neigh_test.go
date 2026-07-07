@@ -7,7 +7,7 @@ import (
 )
 
 func TestParseIPNeigh(t *testing.T) {
-	input := `192.168.1.1 dev eth0 lladdr aa:bb:cc:dd:ee:ff REACHABLE
+	input := `192.168.1.1 dev eth0 lladdr b8:27:eb:dd:ee:ff REACHABLE
 192.168.1.20 dev eth0 lladdr 00:11:22:33:44:55 STALE
 192.168.1.30 dev wlan0 INCOMPLETE
 fe80::1 dev eth0 lladdr 66:77:88:99:aa:bb router STALE
@@ -22,8 +22,17 @@ fe80::1 dev eth0 lladdr 66:77:88:99:aa:bb router STALE
 		t.Fatalf("len(observations) = %d, want 3", len(observations))
 	}
 	first := observations[0]
-	if first.IP != "192.168.1.1" || first.MAC != "aa:bb:cc:dd:ee:ff" || first.Interface != "eth0" || first.State != "REACHABLE" {
+	if first.IP != "192.168.1.1" || first.MAC != "b8:27:eb:dd:ee:ff" || first.Interface != "eth0" || first.State != "REACHABLE" {
 		t.Fatalf("first observation = %#v", first)
+	}
+	if first.Vendor == nil || *first.Vendor != "Raspberry Pi Foundation" {
+		t.Fatalf("Vendor = %v", first.Vendor)
+	}
+	if first.MACClassification == nil || !first.MACClassification.OUIApplicable {
+		t.Fatalf("MACClassification = %#v", first.MACClassification)
+	}
+	if first.NetworkClassification == nil || first.NetworkClassification.NetworkType != "ethernet" || first.NetworkClassification.AddressType != "private" {
+		t.Fatalf("NetworkClassification = %#v", first.NetworkClassification)
 	}
 	if first.Source != "passive_neigh" {
 		t.Fatalf("Source = %q", first.Source)
@@ -45,6 +54,9 @@ func TestParseIPNeighIncludesIncompleteWhenRequested(t *testing.T) {
 	}
 	if observations[0].State != "INCOMPLETE" {
 		t.Fatalf("State = %q, want INCOMPLETE", observations[0].State)
+	}
+	if observations[0].Vendor != nil || observations[0].MACClassification != nil {
+		t.Fatalf("incomplete enrichment = %#v", observations[0])
 	}
 }
 

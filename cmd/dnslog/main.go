@@ -21,6 +21,8 @@ import (
 	"netatlas/internal/ops"
 	"netatlas/internal/parser"
 	"netatlas/internal/store"
+
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 type parseResult struct {
@@ -573,6 +575,9 @@ func writeBatchWithRetry(
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if err := eventStore.WriteBatch(ctx, batch); err != nil {
 			lastErr = err
+			if isNonRetryableNeo4jError(err) {
+				break
+			}
 			if attempt == maxRetries {
 				break
 			}
@@ -592,4 +597,12 @@ func writeBatchWithRetry(
 		return nil
 	}
 	return fmt.Errorf("write batch failed after %d retries: %w", maxRetries, lastErr)
+}
+
+func isNonRetryableNeo4jError(err error) bool {
+	var neo4jErr *neo4j.Neo4jError
+	if !errors.As(err, &neo4jErr) {
+		return false
+	}
+	return !neo4j.IsRetryable(err)
 }

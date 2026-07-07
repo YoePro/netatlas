@@ -33,7 +33,8 @@
     tbody.innerHTML = sensors.map(s => {
       const latency = s.latency != null ? `${s.latency} ms` : '—';
       const sources = s.sources.map(src => `<span class="tag">${src}</span>`).join(' ');
-      return `<tr class="clickable" onclick="window.location='/html/sensor.html?id=${s.id}'">
+      const detailUrl = `/html/sensor.html?id=${encodeURIComponent(s.id)}`;
+      return `<tr class="clickable" onclick="window.location='${detailUrl}'">
         <td>
           <div style="font-weight:500;display:flex;align-items:center;gap:7px;">
             <div class="status-dot ${s.status === 'online' ? 'online' : s.status === 'warning' ? 'warning' : 'offline'}"></div>
@@ -57,7 +58,8 @@
     const grid = document.getElementById('card-view');
     grid.innerHTML = sensors.map(s => {
       const statusClass = s.status === 'online' ? 'green' : s.status === 'warning' ? 'amber' : 'red';
-      return `<div class="card" style="cursor:pointer" onclick="window.location='/html/sensor.html?id=${s.id}'">
+      const detailUrl = `/html/sensor.html?id=${encodeURIComponent(s.id)}`;
+      return `<div class="card" style="cursor:pointer" onclick="window.location='${detailUrl}'">
         <div class="card-header">
           <div class="card-title" style="gap:8px;">
             <div class="status-dot ${s.status === 'online' ? 'online' : s.status === 'warning' ? 'warning' : 'offline'}" style="margin-right:2px;"></div>

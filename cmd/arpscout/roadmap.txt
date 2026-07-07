@@ -172,6 +172,134 @@ Deliverables:
 - Scan safety limits
 - Unit tests
 
+Status:
+
+Implemented.
+
+Implementation notes:
+- Added `arpscout scan`.
+- Requires explicit `-cidr` input and only supports IPv4 ARP ranges.
+- Supports `-dry-run` to plan targets without sending ARP requests.
+- Enforces a configurable safety limit with `-max-hosts`, defaulting to 256 targets.
+- Supports `-iface`, `-timeout`, and `-interval` for controlled active scanning.
+- Active observations are marked with source `active_scan`.
+- The implementation shells out to `arping` for packet sending and keeps CIDR planning/parser logic unit tested.
+
+=============================================================================================================================================================================================
+ARP-0.4.1 Scan Target Discovery & CLI UX
+=============================================================================================================================================================================================
+
+Goal:
+Make active scanning easier and safer by discovering reasonable scan targets automatically and improving scan command feedback.
+
+Scope:
+- Allow `arpscout scan` without explicit CIDR.
+- Auto-detect local interface networks.
+- Classify scan targets before scanning.
+- Scan normal physical LAN interfaces by default.
+- Skip loopback, Docker bridges, virtual bridges, VPN and container networks by default.
+- Allow explicit CIDR scan with `arpscout scan <cidr>`.
+- Allow explicit interface scan with `arpscout scan -iface enp3s0`.
+- Allow all discovered networks with `arpscout scan -all`.
+- Show clear usage when no valid scan target exists.
+- Show scan plan before active scan starts.
+- Improve missing CIDR error message.
+
+Deliverables:
+- Scan target discovery.
+- Interface/network classifier reuse.
+- Default scan target selection.
+- `-iface` scan target support.
+- `-all` scan mode.
+- Human-readable scan plan.
+- Better CLI help and error messages.
+- Unit tests for physical, loopback, Docker, bridge and VPN interfaces.
+
+Status:
+
+Implemented.
+
+Implementation notes:
+- Added scan target discovery from local interface IPv4 networks.
+- `arpscout scan` can run without CIDR and selects the first normal physical LAN target.
+- Explicit CIDR is supported with both `-cidr 192.168.1.0/24` and `arpscout scan 192.168.1.0/24`.
+- `-iface` filters discovered targets or binds an explicit CIDR scan to an interface.
+- `-all` includes discovered networks that are normally skipped, while existing safety limits still apply.
+- Loopback, Docker-style bridges, virtual bridges, VPN and container networks are skipped by default.
+- `-format text` prints a human-readable scan plan and result summary.
+- Unit tests cover physical, loopback, Docker bridge, VPN, `-all`, interface filtering and positional CIDR.
+
+=============================================================================================================================================================================================
+ARP-0.4.2 Scan Output Model
+=============================================================================================================================================================================================
+
+Goal:
+Make active scan output useful for both humans and machines without flooding normal output with uninteresting planned target lists.
+
+Scope:
+- Separate scan plan from scan result.
+- Do not include full planned target lists in normal output.
+- Report scan summary instead of every possible target.
+- Include discovered observations in normal scan output.
+- Include target count, first target and last target in dry-run output.
+- Include full planned target list only in debug output.
+- Add reply count and scan duration.
+- Add network type/classification to scan result.
+- Keep JSON output stable and predictable.
+
+Deliverables:
+- ScanPlan model.
+- ScanResult model.
+- Human-readable scan summary.
+- JSON scan result output.
+- Dry-run summary output.
+- Debug-only planned target output.
+- Unit tests for normal, dry-run and debug output.
+
+Status:
+
+Implemented.
+
+Implementation notes:
+- Added `ScanPlan` and `ScanStatistics` to active scan results.
+- Normal JSON output reports scan plan and statistics instead of a full planned target list.
+- Dry-run output includes target count, first target and last target.
+- Full planned target output is only included with `-debug`.
+- Text output prints a concise scan summary with reply count, scanned count and duration.
+- Scan result includes address and network classification through the plan model.
+
+=============================================================================================================================================================================================
+ARP-0.4.3 Discovery Result Model
+=============================================================================================================================================================================================
+
+Goal:
+Make active scanning report discovered devices instead of scan mechanics.
+
+Scope:
+- Focus output on discovered devices.
+- Summarize scan statistics separately.
+- Compress contiguous non-responsive address ranges.
+- Report discovered devices in observation format.
+- Separate user-facing discovery output from debugging information.
+- Support machine-readable JSON and concise human-readable output.
+
+Deliverables:
+- DiscoveryResult model.
+- ScanStatistics model.
+- Address range compression.
+- Human-readable discovery summary.
+- JSON discovery output.
+
+Status:
+
+Implemented.
+
+Implementation notes:
+- Active scan JSON output now reports discovered devices as `discoveries` using the observation schema.
+- Internal scan result still keeps observations for daemon/transport reuse.
+- Scan statistics include target count, scanned count, reply count, duration and compressed non-responsive ranges.
+- Text output focuses on discovered devices and a compact range count rather than scan mechanics.
+- Address range compression groups contiguous non-responsive IPv4 addresses.
 
 =============================================================================================================================================================================================
 ARP-0.5 Vendor Identification
@@ -191,6 +319,53 @@ Deliverables:
 - OUI lookup module
 - Vendor-enriched observations
 - Tests for known and unknown prefixes
+
+Status:
+
+Implemented.
+
+Implementation notes:
+- Added a local built-in OUI lookup module.
+- Observations now include `vendor` when MAC address data is available.
+- Known prefixes resolve to manufacturer names and unknown prefixes resolve to `Unknown`.
+- Empty MAC addresses keep vendor empty, which is useful for incomplete neighbour entries.
+- Passive neighbour observations and active scan observations are vendor-enriched.
+- Unit tests cover known prefixes, unknown prefixes, empty MACs, normalized MAC formats, and enriched passive/active observations.
+
+=============================================================================================================================================================================================
+ARP-0.5.1 MAC & Network Classification
+=============================================================================================================================================================================================
+
+Goal:
+Improve observation quality by classifying MAC addresses and local networks before publishing observations.
+
+Scope:
+- Detect globally unique and locally administered MAC addresses.
+- Detect unicast and multicast MAC addresses.
+- Perform OUI lookup only for globally assigned MAC addresses.
+- Report vendor as null when OUI lookup is not applicable.
+- Classify local networks based on interface and address ranges.
+- Identify common virtual network types such as Docker bridges.
+- Include MAC and network classification in observations.
+
+Deliverables:
+- MAC classification module.
+- Network classification module.
+- Extended observation schema.
+- Unit tests covering global, local, multicast and Docker networks.
+
+Status:
+
+Implemented.
+
+Implementation notes:
+- Added MAC classification for unicast, multicast, globally unique, locally administered, and OUI applicability.
+- Added network classification for address type and interface type.
+- Detects Docker-style bridge interfaces such as docker0, br-*, veth*, cni*, and virbr* as virtual bridges.
+- Observation schema now includes `mac_classification` and `network_classification`.
+- Vendor lookup is only applied when the MAC address is globally assigned unicast.
+- Vendor is emitted as JSON null when OUI lookup is not applicable or the MAC is missing.
+- Unit tests cover global, local, multicast, wireless, and Docker-style network classifications.
 
 
 =============================================================================================================================================================================================
@@ -217,6 +392,19 @@ Deliverables:
 - JSON event output
 - Unit tests
 
+Status:
+
+Implemented.
+
+Implementation notes:
+- Added an in-memory change detector for comparing observation batches.
+- Added `arpscout changes` for comparing two observation JSON files.
+- Emits JSON by default and supports human-readable text with `-format text`.
+- Detects new devices, missing devices, MAC changes for IPs, IP changes for MACs,
+  duplicate IPs in the current batch, and gateway MAC changes with `-gateway`.
+- Does not write local state or use a database; daemon mode can reuse the same in-memory detector later.
+- Unit tests cover event generation, in-memory detector behaviour, and CLI text output.
+
 
 =============================================================================================================================================================================================
 ARP-0.7 Sensor Daemon
@@ -241,6 +429,21 @@ Deliverables:
 - Log output
 - Runtime status output
 
+Status:
+
+Implemented.
+
+Implementation notes:
+- Added `arpscout daemon`.
+- Performs periodic passive neighbour reads and keeps change detection state in memory.
+- Supports optional periodic active scans with `active_scan`, `scan_cidr`, `scan_interval`, and `max_scan_hosts`.
+- Reads daemon settings from `[arpscout]` in the NetAtlas INI config and supports CLI overrides.
+- Logs batch summaries and runtime status in text mode by default, with JSON output available.
+- Handles SIGINT/SIGTERM through context cancellation for graceful shutdown.
+- Added `-once` for smoke tests and operational checks.
+- Does not use a local database.
+- Added config example entries and a systemd unit draft.
+
 
 =============================================================================================================================================================================================
 ARP-0.8 Observation Transport
@@ -264,6 +467,21 @@ Deliverables:
 - Heartbeat sender
 - File-based spool
 - Integration tests
+
+Status:
+
+Implemented.
+
+Implementation notes:
+- Added a NetAtlas Core HTTP client for sensor registration, heartbeat, and observation batch upload.
+- Added daemon transport integration for uploading observations and change events.
+- Added bearer token authentication support.
+- Added retry support around transport calls.
+- Added JSONL file spool fallback when Core upload fails.
+- Added dry-run output path for writing upload payloads without contacting Core.
+- Added `[arpscout_transport]` config example.
+- Transport is disabled by default and uses no local database.
+- Integration-style tests use httptest for HTTP transport and temp files for spool/dry-run output.
 
 
 =============================================================================================================================================================================================
@@ -290,6 +508,20 @@ Deliverables:
 - Error handling tests
 - Operational notes
 
+Status:
+
+Implemented.
+
+Implementation notes:
+- Added scan safety validation for CIDR, timeout, interval and maximum target count.
+- Added daemon config validation for passive/status intervals, active scan CIDR, active scan interval and max scan hosts.
+- Added transport config validation for Core URL, timeout, retries and spool path.
+- Added `arpscout check` for config validation, interface diagnostics and active scan permission diagnostics.
+- Added interface-name validation for daemon CLI overrides.
+- Identity now reports `operational_safety_checks`.
+- README operational notes document preflight checks, scan limits and spool fallback.
+- Unit tests cover scan safety, daemon config validation, transport validation and CLI check output.
+
 
 =============================================================================================================================================================================================
 ARP-1.0 Stable ARP Sensor
@@ -315,3 +547,17 @@ Deliverables:
 - Systemd example
 - Test coverage
 - README
+
+Status:
+
+Implemented.
+
+Implementation notes:
+- Completed the first stable arpscout feature set across passive discovery, identity,
+  active scan, vendor lookup, classification, change detection, daemon mode, transport
+  and operational safety checks.
+- Added an extra 1.0 hardening pass for active scan timeout handling and interface validation.
+- Active scan timeouts now round up to whole seconds for arping and cannot produce `-w 0`.
+- `arpscout scan -iface` now validates interface names before planning or running scans.
+- Identity now reports version `1.0` and capability `stable_arp_sensor`.
+- Full arpscout and repository test suites pass.

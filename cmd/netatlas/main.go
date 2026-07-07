@@ -1,16 +1,24 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"netatlas/internal/arpscout"
+	"netatlas/internal/config"
+	atlas "netatlas/internal/netatlas"
 
 	"gopkg.in/ini.v1"
 )
@@ -21,7 +29,27 @@ type serverConfig struct {
 	port          int
 	htmlDir       string
 	staticDir     string
+	dnsSource     dnsDataSource
+	arpScout      *arpscout.Identity
+	arpStore      arpScoutStore
 }
+
+type dnsDataSource interface {
+	Stats(context.Context) (map[string]any, error)
+	Graph(context.Context) (map[string]any, error)
+	SensorSummaries(context.Context) ([]map[string]any, error)
+	SensorDetails(context.Context, string) (map[string]any, bool, error)
+	ClientDetails(context.Context, string) (map[string]any, bool, error)
+	UpdateClientMetadata(context.Context, atlas.ClientMetadataPatch) (map[string]any, error)
+}
+
+type arpScoutStore interface {
+	Register(context.Context, arpscout.Identity) error
+	Heartbeat(context.Context, arpscout.Identity, arpscout.DaemonStatus) error
+	WriteBatch(context.Context, arpscout.ObservationBatch) error
+}
+
+const arpStoreTimeout = 30 * time.Second
 
 func main() {
 	cfg := defaultServerConfig()
@@ -37,6 +65,25 @@ func main() {
 		log.Fatal(err)
 	}
 	cfg = mergeServerConfig(loaded, cfg)
+	if identity, ok, err := loadConfiguredArpScout(cfg.configPath); err != nil {
+		log.Printf("NetAtlas configured arpscout sensor disabled: %v", err)
+	} else if ok {
+		cfg.arpScout = &identity
+	}
+	dnsReader, err := openDNSReader(cfg.configPath)
+	if err != nil {
+		log.Printf("NetAtlas DNS dataset sensor disabled: %v", err)
+	} else if dnsReader != nil {
+		cfg.dnsSource = dnsReader
+		log.Printf("NetAtlas DNS dataset sensor enabled from Neo4j")
+	}
+	arpStore, err := openArpStore(cfg.configPath)
+	if err != nil {
+		log.Printf("NetAtlas arpscout Neo4j persistence disabled: %v", err)
+	} else if arpStore != nil {
+		cfg.arpStore = arpStore
+		log.Printf("NetAtlas arpscout Neo4j persistence enabled")
+	}
 
 	mux := newServer(cfg)
 	log.Printf("NetAtlas UI listening on http://%s", cfg.listenAddr())
@@ -109,6 +156,13 @@ func resolveConfigPath(configPath, value string) string {
 func mergeServerConfig(fileCfg, flagCfg serverConfig) serverConfig {
 	result := fileCfg
 	result.configPath = flagCfg.configPath
+	result.dnsSource = flagCfg.dnsSource
+	if flagCfg.arpScout != nil {
+		result.arpScout = flagCfg.arpScout
+	}
+	if flagCfg.arpStore != nil {
+		result.arpStore = flagCfg.arpStore
+	}
 	if flagCfg.listenAddress != "" {
 		result.listenAddress = flagCfg.listenAddress
 	}
@@ -130,6 +184,10 @@ func (cfg serverConfig) listenAddr() string {
 
 func newServer(cfg serverConfig) http.Handler {
 	mux := http.NewServeMux()
+	core := newArpScoutCore(cfg.arpStore)
+	if cfg.arpScout != nil {
+		core.configure(*cfg.arpScout)
+	}
 
 	mux.HandleFunc("/", pageHandler(cfg.htmlDir, "index.html"))
 	mux.HandleFunc("/login", pageHandler(cfg.htmlDir, "login.html"))
@@ -151,32 +209,802 @@ func newServer(cfg serverConfig) http.Handler {
 	})
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(cfg.staticDir))))
 
-	mux.HandleFunc("/api/stats", jsonHandler(mockStats()))
-	mux.HandleFunc("/api/graph", jsonHandler(mockGraph()))
+	mux.HandleFunc("/api/stats", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/stats" {
+			http.NotFound(w, r)
+			return
+		}
+		stats := mockStats()
+		if cfg.dnsSource != nil {
+			if dnsStats, err := withAPITimeout(r.Context(), cfg.dnsSource.Stats); err == nil {
+				stats = dnsStats
+			} else {
+				log.Printf("read dns stats failed: %v", err)
+			}
+		}
+		var baseSensors []map[string]any
+		if cfg.dnsSource != nil {
+			if dnsSensors, err := withAPITimeout(r.Context(), cfg.dnsSource.SensorSummaries); err == nil {
+				baseSensors = dnsSensors
+			} else {
+				log.Printf("read dns sensors for stats failed: %v", err)
+			}
+		}
+		writeJSON(w, mergeArpScoutStats(stats, filterArpScoutSummaries(baseSensors, core.sensorSummaries())))
+	})
+	mux.HandleFunc("/api/graph", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/graph" {
+			http.NotFound(w, r)
+			return
+		}
+		graph := mockGraph()
+		if cfg.dnsSource != nil {
+			if dnsGraph, err := withAPITimeout(r.Context(), cfg.dnsSource.Graph); err == nil {
+				graph = dnsGraph
+			} else {
+				log.Printf("read dns graph failed: %v", err)
+			}
+		}
+		writeJSON(w, atlas.MergeGraph(graph, filterArpScoutGraph(graph, core.graph())))
+	})
 	mux.HandleFunc("/api/sensors", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/sensors" {
 			http.NotFound(w, r)
 			return
 		}
-		writeJSON(w, mockSensors())
+		sensors := mockSensors()
+		if cfg.dnsSource != nil {
+			if dnsSensors, err := withAPITimeout(r.Context(), cfg.dnsSource.SensorSummaries); err == nil && len(dnsSensors) > 0 {
+				sensors = dnsSensors
+			} else if err != nil {
+				log.Printf("read dns sensors failed: %v", err)
+			}
+		}
+		writeJSON(w, appendArpScoutSensors(sensors, filterArpScoutSummaries(sensors, core.sensorSummaries())))
 	})
 	mux.HandleFunc("/api/sensors/", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/api/sensors/")
-		for _, sensor := range mockSensors() {
+		if cfg.dnsSource != nil {
+			if details, ok, err := withAPITimeoutValue(r.Context(), id, cfg.dnsSource.SensorDetails); err == nil && ok {
+				writeJSON(w, details)
+				return
+			} else if err != nil {
+				log.Printf("read dns sensor detail failed: %v", err)
+			}
+		}
+		sensors := mockSensors()
+		if cfg.dnsSource != nil {
+			if dnsSensors, err := withAPITimeout(r.Context(), cfg.dnsSource.SensorSummaries); err == nil && len(dnsSensors) > 0 {
+				sensors = dnsSensors
+			}
+		}
+		for _, sensor := range appendArpScoutSensors(sensors, core.sensorSummaries()) {
 			if sensor["id"] == id {
 				details := sensorDetails(sensor)
+				if arpDetails, ok := core.sensorDetails(id); ok {
+					details = arpDetails
+				}
 				writeJSON(w, details)
 				return
 			}
 		}
 		http.NotFound(w, r)
 	})
+	mux.HandleFunc("/api/auth/login", authLoginHandler)
+	mux.HandleFunc("/api/clients/", clientHandler(cfg.dnsSource))
+	mux.HandleFunc("/api/arpscout/register", core.registerHandler)
+	mux.HandleFunc("/api/arpscout/heartbeat", core.heartbeatHandler)
+	mux.HandleFunc("/api/arpscout/observations", core.observationsHandler)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
 
 	return logRequests(mux)
+}
+
+func openDNSReader(path string) (*atlas.DNSReader, error) {
+	cfg, err := config.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Neo4jPassword == "" {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return atlas.NewDNSReader(ctx, cfg)
+}
+
+func openArpStore(path string) (*atlas.ArpStore, error) {
+	cfg, err := config.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Neo4jPassword == "" {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), arpStoreTimeout)
+	defer cancel()
+	return atlas.NewArpStore(ctx, cfg)
+}
+
+func loadConfiguredArpScout(path string) (arpscout.Identity, bool, error) {
+	cfg, err := arpscout.LoadIdentityConfig(path)
+	if err != nil {
+		return arpscout.Identity{}, false, err
+	}
+	if strings.TrimSpace(cfg.SensorID) == "" && strings.TrimSpace(cfg.DisplayName) == "" && strings.TrimSpace(cfg.Site) == "" && len(cfg.Interfaces) == 0 {
+		return arpscout.Identity{}, false, nil
+	}
+	identity, err := arpscout.BuildIdentity(cfg)
+	if err != nil {
+		return arpscout.Identity{}, false, err
+	}
+	return identity, true, nil
+}
+
+func withAPITimeout[T any](parent context.Context, fn func(context.Context) (T, error)) (T, error) {
+	ctx, cancel := context.WithTimeout(parent, arpStoreTimeout)
+	defer cancel()
+	return fn(ctx)
+}
+
+func withAPITimeoutValue[T any, V any](parent context.Context, value V, fn func(context.Context, V) (T, bool, error)) (T, bool, error) {
+	ctx, cancel := context.WithTimeout(parent, arpStoreTimeout)
+	defer cancel()
+	return fn(ctx, value)
+}
+
+func withAPITimeoutUpdate[T any, V any](parent context.Context, value V, fn func(context.Context, V) (T, error)) (T, error) {
+	ctx, cancel := context.WithTimeout(parent, arpStoreTimeout)
+	defer cancel()
+	return fn(ctx, value)
+}
+
+type arpScoutCore struct {
+	mu          sync.Mutex
+	sensorState map[string]*arpScoutSensor
+	store       arpScoutStore
+}
+
+type arpScoutSensor struct {
+	Identity     arpscout.Identity
+	Status       arpscout.DaemonStatus
+	LastSeen     time.Time
+	Observations int
+	Changes      int
+	Batches      int
+	Recent       []arpscout.Observation
+	RecentChange []arpscout.ChangeEvent
+}
+
+func newArpScoutCore(store arpScoutStore) *arpScoutCore {
+	return &arpScoutCore{sensorState: make(map[string]*arpScoutSensor), store: store}
+}
+
+func (c *arpScoutCore) configure(identity arpscout.Identity) {
+	if strings.TrimSpace(identity.SensorID) == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	sensor := c.ensureSensor(identity.SensorID)
+	if sensor.Identity.DisplayName == "" {
+		sensor.Identity = identity
+	}
+}
+
+func (c *arpScoutCore) registerHandler(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	var identity arpscout.Identity
+	if err := decodeJSON(r, &identity); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(identity.SensorID) == "" {
+		http.Error(w, "sensor_id is required", http.StatusBadRequest)
+		return
+	}
+	c.mu.Lock()
+	sensor := c.ensureSensor(identity.SensorID)
+	sensor.Identity = identity
+	sensor.LastSeen = time.Now()
+	c.mu.Unlock()
+	c.persistRegister(r.Context(), identity)
+	writeJSON(w, map[string]any{"ok": true, "sensor_id": identity.SensorID})
+}
+
+func (c *arpScoutCore) heartbeatHandler(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	var payload struct {
+		Identity arpscout.Identity     `json:"identity"`
+		Status   arpscout.DaemonStatus `json:"status"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(payload.Identity.SensorID) == "" {
+		http.Error(w, "identity.sensor_id is required", http.StatusBadRequest)
+		return
+	}
+	c.mu.Lock()
+	sensor := c.ensureSensor(payload.Identity.SensorID)
+	sensor.Identity = payload.Identity
+	sensor.Status = payload.Status
+	sensor.LastSeen = time.Now()
+	c.mu.Unlock()
+	c.persistHeartbeat(r.Context(), payload.Identity, payload.Status)
+	writeJSON(w, map[string]any{"ok": true, "sensor_id": payload.Identity.SensorID})
+}
+
+func (c *arpScoutCore) observationsHandler(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	var batch arpscout.ObservationBatch
+	if err := decodeJSON(r, &batch); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(batch.SensorID) == "" {
+		http.Error(w, "sensor_id is required", http.StatusBadRequest)
+		return
+	}
+	c.mu.Lock()
+	sensor := c.ensureSensor(batch.SensorID)
+	sensor.LastSeen = time.Now()
+	sensor.Observations += len(batch.Observations)
+	sensor.Changes += len(batch.Changes)
+	sensor.Batches++
+	sensor.Recent = appendCappedObservations(sensor.Recent, batch.Observations, 50)
+	sensor.RecentChange = appendCappedChanges(sensor.RecentChange, batch.Changes, 50)
+	c.mu.Unlock()
+	c.persistBatch(r.Context(), batch)
+	writeJSON(w, map[string]any{
+		"ok":           true,
+		"sensor_id":    batch.SensorID,
+		"observations": len(batch.Observations),
+		"changes":      len(batch.Changes),
+	})
+}
+
+func (c *arpScoutCore) persistRegister(parent context.Context, identity arpscout.Identity) {
+	if c.store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, arpStoreTimeout)
+	defer cancel()
+	if err := c.store.Register(ctx, identity); err != nil {
+		log.Printf("persist arpscout register failed: %v", err)
+	}
+}
+
+func (c *arpScoutCore) persistHeartbeat(parent context.Context, identity arpscout.Identity, status arpscout.DaemonStatus) {
+	if c.store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, arpStoreTimeout)
+	defer cancel()
+	if err := c.store.Heartbeat(ctx, identity, status); err != nil {
+		log.Printf("persist arpscout heartbeat failed: %v", err)
+	}
+}
+
+func (c *arpScoutCore) persistBatch(parent context.Context, batch arpscout.ObservationBatch) {
+	if c.store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, arpStoreTimeout)
+	defer cancel()
+	if err := c.store.WriteBatch(ctx, batch); err != nil {
+		log.Printf("persist arpscout batch failed: %v", err)
+	}
+}
+
+func (c *arpScoutCore) ensureSensor(sensorID string) *arpScoutSensor {
+	sensor := c.sensorState[sensorID]
+	if sensor == nil {
+		sensor = &arpScoutSensor{Identity: arpscout.Identity{SensorID: sensorID}}
+		c.sensorState[sensorID] = sensor
+	}
+	return sensor
+}
+
+func (c *arpScoutCore) sensorSummaries() []map[string]any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	items := make([]map[string]any, 0, len(c.sensorState))
+	for _, sensor := range c.sensorState {
+		items = append(items, arpScoutSensorSummary(sensor))
+	}
+	return items
+}
+
+func (c *arpScoutCore) sensorDetails(sensorID string) (map[string]any, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	sensor := c.sensorState[sensorID]
+	if sensor == nil {
+		return nil, false
+	}
+	details := arpScoutSensorSummary(sensor)
+	details["cpu"] = 0
+	details["memory"] = 0
+	details["disk"] = 0
+	details["config"] = map[string]any{
+		"sensor_id":    sensor.Identity.SensorID,
+		"hostname":     sensor.Identity.Hostname,
+		"site":         sensor.Identity.Site,
+		"interfaces":   sensor.Identity.Interfaces,
+		"capabilities": sensor.Identity.Capabilities,
+		"batches":      sensor.Batches,
+	}
+	details["recentErrors"] = arpScoutChangeActivities(sensor.RecentChange)
+	details["topDomains"] = arpScoutTopDevices(sensor.Recent)
+	details["timeline"] = timeline()
+	return details, true
+}
+
+func (c *arpScoutCore) graph() map[string]any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	nodes := make([]map[string]any, 0, len(c.sensorState))
+	edges := make([]map[string]any, 0)
+	seenDevices := make(map[string]struct{})
+	for _, sensor := range c.sensorState {
+		summary := arpScoutSensorSummary(sensor)
+		sensorNodeID := "arp-sensor:" + sensor.Identity.SensorID
+		nodes = append(nodes, map[string]any{
+			"id":      sensorNodeID,
+			"label":   summary["name"],
+			"type":    "sensor",
+			"status":  summary["status"],
+			"queries": summary["events"],
+			"source":  "arpscout",
+		})
+		for _, observation := range sensor.Recent {
+			if strings.TrimSpace(observation.IP) == "" {
+				continue
+			}
+			deviceNodeID := "arp-device:" + observation.IP
+			if _, ok := seenDevices[deviceNodeID]; !ok {
+				nodes = append(nodes, map[string]any{
+					"id":       deviceNodeID,
+					"label":    observation.IP,
+					"type":     "client",
+					"ip":       observation.IP,
+					"hostname": arpDeviceLabel(observation),
+					"mac":      observation.MAC,
+					"source":   "arpscout",
+				})
+				seenDevices[deviceNodeID] = struct{}{}
+			}
+			edges = append(edges, map[string]any{
+				"source": sensorNodeID,
+				"target": deviceNodeID,
+				"type":   "arp_seen",
+				"count":  1,
+			})
+		}
+	}
+	return map[string]any{"nodes": nodes, "edges": edges}
+}
+
+func arpScoutSensorSummary(sensor *arpScoutSensor) map[string]any {
+	name := sensor.Identity.DisplayName
+	if name == "" {
+		name = sensor.Identity.SensorID
+	}
+	location := sensor.Identity.Site
+	if location == "" {
+		location = sensor.Identity.Hostname
+	}
+	status := "online"
+	if sensor.LastSeen.IsZero() {
+		status = "offline"
+	} else if time.Since(sensor.LastSeen) > 10*time.Minute {
+		status = "warning"
+	}
+	uptime := 100.0
+	if status == "offline" {
+		uptime = 0
+	} else if status != "online" {
+		uptime = 97.0
+	}
+	return map[string]any{
+		"id":       sensor.Identity.SensorID,
+		"name":     name,
+		"type":     "arp",
+		"location": location,
+		"version":  sensor.Identity.Version,
+		"status":   status,
+		"lastSeen": relativeTime(sensor.LastSeen),
+		"sources":  []string{"ARP"},
+		"events":   sensor.Observations + sensor.Changes,
+		"latency":  0,
+		"uptime":   uptime,
+		"batches":  sensor.Batches,
+	}
+}
+
+func appendCappedObservations(current, next []arpscout.Observation, limit int) []arpscout.Observation {
+	if limit <= 0 {
+		return nil
+	}
+	items := append(append([]arpscout.Observation{}, current...), next...)
+	if len(items) > limit {
+		items = items[len(items)-limit:]
+	}
+	return items
+}
+
+func appendCappedChanges(current, next []arpscout.ChangeEvent, limit int) []arpscout.ChangeEvent {
+	if limit <= 0 {
+		return nil
+	}
+	items := append(append([]arpscout.ChangeEvent{}, current...), next...)
+	if len(items) > limit {
+		items = items[len(items)-limit:]
+	}
+	return items
+}
+
+func relativeTime(t time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+	age := time.Since(t)
+	switch {
+	case age < time.Minute:
+		return "just now"
+	case age < time.Hour:
+		return fmt.Sprintf("%d min ago", int(age.Minutes()))
+	case age < 24*time.Hour:
+		return fmt.Sprintf("%d hr ago", int(age.Hours()))
+	default:
+		return fmt.Sprintf("%d days ago", int(age.Hours()/24))
+	}
+}
+
+func arpScoutChangeActivities(changes []arpscout.ChangeEvent) []map[string]any {
+	if len(changes) == 0 {
+		return []map[string]any{}
+	}
+	start := 0
+	if len(changes) > 10 {
+		start = len(changes) - 10
+	}
+	items := make([]map[string]any, 0, len(changes)-start)
+	for _, change := range changes[start:] {
+		level := "info"
+		if change.Type == arpscout.EventDuplicateIP || change.Type == arpscout.EventGatewayChange {
+			level = "warn"
+		}
+		observed := change.ObservedAt
+		if observed.IsZero() {
+			observed = time.Now()
+		}
+		items = append(items, map[string]any{
+			"time":  observed.Format("15:04:05"),
+			"level": level,
+			"msg":   change.Message,
+		})
+	}
+	return items
+}
+
+func arpScoutTopDevices(observations []arpscout.Observation) []map[string]any {
+	counts := make(map[string]int)
+	latest := make(map[string]arpscout.Observation)
+	for _, observation := range observations {
+		if strings.TrimSpace(observation.IP) == "" {
+			continue
+		}
+		counts[observation.IP]++
+		latest[observation.IP] = observation
+	}
+	type pair struct {
+		ip    string
+		count int
+	}
+	pairs := make([]pair, 0, len(counts))
+	for ip, count := range counts {
+		pairs = append(pairs, pair{ip: ip, count: count})
+	}
+	sort.SliceStable(pairs, func(i, j int) bool {
+		if pairs[i].count == pairs[j].count {
+			return pairs[i].ip < pairs[j].ip
+		}
+		return pairs[i].count > pairs[j].count
+	})
+	if len(pairs) > 5 {
+		pairs = pairs[:5]
+	}
+	total := len(observations)
+	if total == 0 {
+		total = 1
+	}
+	items := make([]map[string]any, 0, len(pairs))
+	for _, item := range pairs {
+		observation := latest[item.ip]
+		vendor := ""
+		if observation.Vendor != nil {
+			vendor = *observation.Vendor
+		}
+		items = append(items, map[string]any{
+			"domain":  item.ip,
+			"label":   item.ip,
+			"ip":      item.ip,
+			"mac":     observation.MAC,
+			"vendor":  vendor,
+			"queries": item.count,
+			"pct":     float64(item.count) * 100 / float64(total),
+		})
+	}
+	return items
+}
+
+func arpDeviceLabel(observation arpscout.Observation) string {
+	if observation.Vendor != nil && strings.TrimSpace(*observation.Vendor) != "" {
+		return *observation.Vendor
+	}
+	if observation.MAC != "" {
+		return observation.MAC
+	}
+	return observation.IP
+}
+
+func mergeArpScoutGraph(base, arpGraph map[string]any) map[string]any {
+	return map[string]any{
+		"nodes": appendGraphItems(base["nodes"], arpGraph["nodes"]),
+		"edges": appendGraphItems(base["edges"], arpGraph["edges"]),
+	}
+}
+
+func appendGraphItems(base, extra any) []map[string]any {
+	var result []map[string]any
+	if items, ok := base.([]map[string]any); ok {
+		result = append(result, items...)
+	}
+	if items, ok := extra.([]map[string]any); ok {
+		result = append(result, items...)
+	}
+	return result
+}
+
+func mergeArpScoutStats(base map[string]any, sensors []map[string]any) map[string]any {
+	result := make(map[string]any, len(base))
+	for key, value := range base {
+		result[key] = value
+	}
+	totalSensors := intValue(result["totalSensors"]) + len(sensors)
+	activeSensors := intValue(result["activeSensors"])
+	newDevices := intValueFromStat(result["newDevices"])
+	for _, sensor := range sensors {
+		if sensor["status"] == "online" {
+			activeSensors++
+		}
+		newDevices += intValue(sensor["events"])
+	}
+	result["activeSensors"] = activeSensors
+	result["totalSensors"] = totalSensors
+	if stat, ok := result["newDevices"].(map[string]any); ok {
+		clone := make(map[string]any, len(stat))
+		for key, value := range stat {
+			clone[key] = value
+		}
+		clone["value"] = newDevices
+		result["newDevices"] = clone
+	}
+	return result
+}
+
+func intValue(value any) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
+}
+
+func intValueFromStat(value any) int {
+	if stat, ok := value.(map[string]any); ok {
+		return intValue(stat["value"])
+	}
+	return 0
+}
+
+func authLoginHandler(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	var payload struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(payload.Username) == "" {
+		http.Error(w, "username is required", http.StatusUnauthorized)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "user": payload.Username})
+}
+
+func clientHandler(source dnsDataSource) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if source == nil {
+			http.Error(w, "client metadata requires Neo4j", http.StatusServiceUnavailable)
+			return
+		}
+		ip := strings.TrimPrefix(r.URL.Path, "/api/clients/")
+		if decoded, err := url.PathUnescape(ip); err == nil {
+			ip = decoded
+		}
+		ip = strings.TrimSpace(ip)
+		if ip == "" || strings.Contains(ip, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			details, ok, err := withAPITimeoutValue(r.Context(), ip, source.ClientDetails)
+			if err != nil {
+				log.Printf("read client metadata failed: %v", err)
+				http.Error(w, "read client metadata failed", http.StatusInternalServerError)
+				return
+			}
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			writeJSON(w, details)
+		case http.MethodPatch, http.MethodPost:
+			var payload struct {
+				ManualName string `json:"manual_name"`
+				Hostname   string `json:"hostname"`
+				DeviceType string `json:"device_type"`
+				Notes      string `json:"notes"`
+				ResolveDNS bool   `json:"resolve_dns"`
+			}
+			if err := decodeJSON(r, &payload); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			patch := atlas.ClientMetadataPatch{
+				IP:         ip,
+				ManualName: payload.ManualName,
+				Hostname:   payload.Hostname,
+				DeviceType: payload.DeviceType,
+				Notes:      payload.Notes,
+				ResolveDNS: payload.ResolveDNS,
+			}
+			details, err := withAPITimeoutUpdate(r.Context(), patch, source.UpdateClientMetadata)
+			if err != nil {
+				log.Printf("update client metadata failed: %v", err)
+				http.Error(w, "update client metadata failed", http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, details)
+		default:
+			w.Header().Set("Allow", "GET, PATCH, POST")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
+	if r.Method == method {
+		return true
+	}
+	w.Header().Set("Allow", method)
+	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	return false
+}
+
+func decodeJSON(r *http.Request, value any) error {
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(value)
+}
+
+func appendArpScoutSensors(base []map[string]any, sensors []map[string]any) []map[string]any {
+	result := make([]map[string]any, 0, len(base)+len(sensors))
+	seen := make(map[any]struct{})
+	for _, sensor := range append(base, sensors...) {
+		id := sensor["id"]
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, sensor)
+	}
+	return result
+}
+
+func filterArpScoutSummaries(base []map[string]any, sensors []map[string]any) []map[string]any {
+	persisted := make(map[any]struct{})
+	for _, sensor := range base {
+		if sensor["type"] == "arp" {
+			persisted[sensor["id"]] = struct{}{}
+		}
+	}
+	if len(persisted) == 0 {
+		return sensors
+	}
+	filtered := make([]map[string]any, 0, len(sensors))
+	for _, sensor := range sensors {
+		if _, ok := persisted[sensor["id"]]; ok {
+			continue
+		}
+		filtered = append(filtered, sensor)
+	}
+	return filtered
+}
+
+func filterArpScoutGraph(base, graph map[string]any) map[string]any {
+	persistedSensors := persistentArpSensors(base)
+	if len(persistedSensors) == 0 {
+		return graph
+	}
+	nodes, _ := graph["nodes"].([]map[string]any)
+	edges, _ := graph["edges"].([]map[string]any)
+	removedDeviceNodes := make(map[string]struct{})
+	filteredEdges := make([]map[string]any, 0, len(edges))
+	for _, edge := range edges {
+		source := fmt.Sprint(edge["source"])
+		target := fmt.Sprint(edge["target"])
+		if _, ok := persistedSensors[source]; ok {
+			removedDeviceNodes[target] = struct{}{}
+			continue
+		}
+		filteredEdges = append(filteredEdges, edge)
+	}
+	keptIDs := make(map[string]struct{})
+	for _, edge := range filteredEdges {
+		keptIDs[fmt.Sprint(edge["source"])] = struct{}{}
+		keptIDs[fmt.Sprint(edge["target"])] = struct{}{}
+	}
+	filteredNodes := make([]map[string]any, 0, len(nodes))
+	for _, node := range nodes {
+		id := fmt.Sprint(node["id"])
+		if _, ok := persistedSensors[id]; ok {
+			continue
+		}
+		if _, removed := removedDeviceNodes[id]; removed {
+			if _, kept := keptIDs[id]; !kept {
+				continue
+			}
+		}
+		filteredNodes = append(filteredNodes, node)
+	}
+	return map[string]any{"nodes": filteredNodes, "edges": filteredEdges}
+}
+
+func persistentArpSensors(graph map[string]any) map[string]struct{} {
+	persisted := make(map[string]struct{})
+	nodes, _ := graph["nodes"].([]map[string]any)
+	for _, node := range nodes {
+		id := fmt.Sprint(node["id"])
+		if strings.HasPrefix(id, "arp-sensor:") {
+			persisted[id] = struct{}{}
+		}
+	}
+	return persisted
 }
 
 func pageHandler(htmlDir, name string) http.HandlerFunc {

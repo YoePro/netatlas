@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"netatlas/internal/config"
 	"netatlas/internal/fingerprint"
@@ -154,7 +155,7 @@ func enrichmentParams(items []fingerprint.Evidence) []map[string]any {
 			"target":        item.Target,
 			"score":         item.Score,
 			"confidence":    item.Confidence,
-			"timestamp":     item.Timestamp,
+			"timestamp":     neo4jTime(item.Timestamp),
 			"evidenceHash":  item.EvidenceHash,
 			"fingerprintID": item.FingerprintID,
 			"matchedDomain": item.MatchedDomain,
@@ -167,7 +168,7 @@ func eventParams(batch []model.DNSEvent) []map[string]any {
 	events := make([]map[string]any, 0, len(batch))
 	for _, event := range batch {
 		events = append(events, map[string]any{
-			"timestamp":      event.Timestamp,
+			"timestamp":      neo4jTime(event.Timestamp),
 			"serverName":     event.ServerName,
 			"serverRole":     event.ServerRole,
 			"clientIP":       event.ClientIP,
@@ -183,6 +184,13 @@ func eventParams(batch []model.DNSEvent) []map[string]any {
 		})
 	}
 	return events
+}
+
+func neo4jTime(value time.Time) time.Time {
+	if value.IsZero() {
+		return value
+	}
+	return value.UTC()
 }
 
 var schemaStatements = []string{

@@ -13,12 +13,15 @@ const (
 )
 
 type Observation struct {
-	IP        string    `json:"ip"`
-	MAC       string    `json:"mac,omitempty"`
-	Interface string    `json:"interface,omitempty"`
-	State     string    `json:"state,omitempty"`
-	Source    string    `json:"source"`
-	Observed  time.Time `json:"observed_at"`
+	IP                    string                 `json:"ip"`
+	MAC                   string                 `json:"mac,omitempty"`
+	Vendor                *string                `json:"vendor"`
+	MACClassification     *MACClassification     `json:"mac_classification,omitempty"`
+	NetworkClassification *NetworkClassification `json:"network_classification,omitempty"`
+	Interface             string                 `json:"interface,omitempty"`
+	State                 string                 `json:"state,omitempty"`
+	Source                string                 `json:"source"`
+	Observed              time.Time              `json:"observed_at"`
 }
 
 type SensorInfo struct {

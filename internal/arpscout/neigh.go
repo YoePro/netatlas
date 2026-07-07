@@ -72,6 +72,7 @@ func ParseIPNeigh(r io.Reader, options PassiveOptions) ([]Observation, error) {
 		if len(options.Interfaces) > 0 && !interfaceAllowed(observation.Interface, options.Interfaces) {
 			continue
 		}
+		EnrichObservation(&observation)
 		observations = append(observations, observation)
 	}
 	if err := scanner.Err(); err != nil {

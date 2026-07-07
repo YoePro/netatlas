@@ -67,6 +67,23 @@ func TestEventParamsIncludesGraphProperties(t *testing.T) {
 	assertParam(t, event, "rawHash", "hash")
 }
 
+func TestEventParamsNormalizeLocalTimezoneForNeo4j(t *testing.T) {
+	local := time.FixedZone("Local", 2*60*60)
+	timestamp := time.Date(2026, 7, 4, 22, 13, 1, 0, local)
+	params := eventParams([]model.DNSEvent{{Timestamp: timestamp}})
+
+	got, ok := params[0]["timestamp"].(time.Time)
+	if !ok {
+		t.Fatalf("timestamp param type = %T", params[0]["timestamp"])
+	}
+	if got.Location() != time.UTC {
+		t.Fatalf("timestamp location = %s, want UTC", got.Location())
+	}
+	if !got.Equal(timestamp) {
+		t.Fatalf("timestamp instant = %s, want %s", got, timestamp)
+	}
+}
+
 func TestSchemaStatementsCoverGraphIdentity(t *testing.T) {
 	want := []string{
 		"DnsServer",
@@ -124,6 +141,23 @@ func TestEnrichmentParamsIncludesEvidenceProperties(t *testing.T) {
 	assertParam(t, item, "evidenceHash", "hash")
 	assertParam(t, item, "fingerprintID", "os-windows-update")
 	assertParam(t, item, "matchedDomain", "windowsupdate.com")
+}
+
+func TestEnrichmentParamsNormalizeLocalTimezoneForNeo4j(t *testing.T) {
+	local := time.FixedZone("Local", 2*60*60)
+	timestamp := time.Date(2026, 7, 5, 12, 0, 0, 0, local)
+	params := enrichmentParams([]fingerprint.Evidence{{Timestamp: timestamp}})
+
+	got, ok := params[0]["timestamp"].(time.Time)
+	if !ok {
+		t.Fatalf("timestamp param type = %T", params[0]["timestamp"])
+	}
+	if got.Location() != time.UTC {
+		t.Fatalf("timestamp location = %s, want UTC", got.Location())
+	}
+	if !got.Equal(timestamp) {
+		t.Fatalf("timestamp instant = %s, want %s", got, timestamp)
+	}
 }
 
 func TestWriteEnrichmentsCypherCoversCategoriesAndEvidence(t *testing.T) {
